@@ -53,6 +53,14 @@ OPENWEBUI_KB_ADD_FILE_PATH_TEMPLATES = [
 	).split(",")
 	if p.strip()
 ]
+OPENWEBUI_FILE_STATUS_PATH_TEMPLATES = [
+	p.strip()
+	for p in os.getenv(
+		"OPENWEBUI_FILE_STATUS_PATH_TEMPLATES",
+		"/api/v1/files/{file_id}/process/status,/api/files/{file_id}/process/status",
+	).split(",")
+	if p.strip()
+]
 
 WORKER_COUNT = int(os.getenv("WORKER_COUNT", "3"))
 MAX_ATTEMPTS = int(os.getenv("MAX_ATTEMPTS", "4"))
@@ -60,6 +68,8 @@ BASE_RETRY_SECONDS = float(os.getenv("BASE_RETRY_SECONDS", "2"))
 MAX_RETRY_SECONDS = float(os.getenv("MAX_RETRY_SECONDS", "60"))
 POLL_IDLE_SECONDS = float(os.getenv("POLL_IDLE_SECONDS", "1"))
 UPLOAD_TIMEOUT_SECONDS = int(os.getenv("UPLOAD_TIMEOUT_SECONDS", "300"))
+FILE_PROCESS_WAIT_SECONDS = int(os.getenv("FILE_PROCESS_WAIT_SECONDS", "600"))
+FILE_PROCESS_POLL_SECONDS = float(os.getenv("FILE_PROCESS_POLL_SECONDS", "2"))
 
 ALLOWED_EXTENSIONS = {
 	ext.strip().lower()
@@ -341,6 +351,39 @@ def _extract_file_id(payload) -> str | None:
 	return None
 
 
+def wait_for_openwebui_file_processing(file_id: str, headers: dict) -> tuple[bool, str]:
+	deadline = time.time() + FILE_PROCESS_WAIT_SECONDS
+	attempt_summaries = []
+
+	while time.time() < deadline:
+		for status_template in OPENWEBUI_FILE_STATUS_PATH_TEMPLATES:
+			status_path = status_template.format(file_id=file_id)
+			status_url = f"{OPENWEBUI_BASE_URL}{status_path}"
+			try:
+				response = requests.get(status_url, headers=headers, timeout=30)
+				if response.status_code in (404, 405):
+					attempt_summaries.append(f"GET {status_path} -> {response.status_code}")
+					continue
+				if response.status_code >= 400:
+					body = response.text[:200].replace("\n", " ")
+					return False, f"File processing status failed ({response.status_code}) on {status_path}: {body}"
+
+				payload = response.json()
+				status = str(payload.get("status", "")).lower()
+				if status == "completed":
+					return True, f"GET {status_path} -> completed"
+				if status == "failed":
+					error_text = payload.get("error") or payload.get("detail") or "processing failed"
+					return False, f"File processing failed on {status_path}: {error_text}"
+				attempt_summaries.append(f"GET {status_path} -> {status or 'pending'}")
+			except Exception as exc:
+				attempt_summaries.append(f"GET {status_path} -> {exc}")
+
+		time.sleep(FILE_PROCESS_POLL_SECONDS)
+
+	return False, f"Timed out waiting for file processing. Tried: {', '.join(attempt_summaries[-10:])}"
+
+
 def upload_to_openwebui_via_file_add(job: dict, headers: dict) -> tuple[bool, str]:
 	kb_id = job["kb_id"]
 	attempt_summaries = []
@@ -352,6 +395,7 @@ def upload_to_openwebui_via_file_add(job: dict, headers: dict) -> tuple[bool, st
 			upload_response = requests.post(
 				upload_url,
 				headers=headers,
+				params={"process": "true", "process_in_background": "false"},
 				files=files,
 				timeout=UPLOAD_TIMEOUT_SECONDS,
 			)
@@ -373,6 +417,11 @@ def upload_to_openwebui_via_file_add(job: dict, headers: dict) -> tuple[bool, st
 			return False, (
 				f"File upload succeeded but file id was missing from response on {upload_path}"
 			)
+
+		processed_ok, processed_detail = wait_for_openwebui_file_processing(file_id, headers)
+		attempt_summaries.append(processed_detail)
+		if not processed_ok:
+			return False, processed_detail
 
 		for add_template in OPENWEBUI_KB_ADD_FILE_PATH_TEMPLATES:
 			add_path = add_template.format(kb_id=kb_id)

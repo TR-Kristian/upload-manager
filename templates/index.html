@@ -314,6 +314,7 @@
 			</div>
 			<div id="statusText" class="status"></div>
 			<div class="toolbar">
+				<button id="refreshKbBtn" class="ghost-btn" type="button">Refresh Knowledge Bases</button>
 				<button id="toggleRefreshBtn" class="ghost-btn" type="button">Pause Auto Refresh</button>
 				<button id="clearWaitingBtn" class="ghost-btn" type="button">Clear Waiting</button>
 				<button id="clearFailedBtn" class="ghost-btn" type="button">Clear Failed Files</button>
@@ -342,6 +343,7 @@
 		const fileInput = document.getElementById("fileInput");
 		const uploadBtn = document.getElementById("uploadBtn");
 		const statusText = document.getElementById("statusText");
+		const refreshKbBtn = document.getElementById("refreshKbBtn");
 		const toggleRefreshBtn = document.getElementById("toggleRefreshBtn");
 		const clearWaitingBtn = document.getElementById("clearWaitingBtn");
 		const clearFailedBtn = document.getElementById("clearFailedBtn");
@@ -356,7 +358,6 @@
 
 		let autoRefreshEnabled = true;
 		let jobsIntervalId = null;
-		let kbIntervalId = null;
 
 		function updateUploadButtonState() {
 			const hasKb = Boolean(kbSelect.value);
@@ -437,6 +438,7 @@
 		}
 
 		async function refreshKnowledgeBases() {
+			refreshKbBtn.disabled = true;
 			kbSelect.innerHTML = "";
 			const placeholder = document.createElement("option");
 			placeholder.value = "";
@@ -472,6 +474,8 @@
 				kbSelect.appendChild(errOpt);
 				updateUploadButtonState();
 				setStatus(`Knowledge base load failed: ${err.message}`, "error");
+			} finally {
+				refreshKbBtn.disabled = false;
 			}
 		}
 
@@ -538,24 +542,24 @@
 		kbSelect.addEventListener("change", updateUploadButtonState);
 		fileInput.addEventListener("change", updateUploadButtonState);
 
+		refreshKbBtn.addEventListener("click", async () => {
+			setStatus("Refreshing knowledge bases...");
+			await refreshKnowledgeBases();
+		});
+
 		toggleRefreshBtn.addEventListener("click", () => {
 			autoRefreshEnabled = !autoRefreshEnabled;
 			if (autoRefreshEnabled) {
 				if (!jobsIntervalId) jobsIntervalId = window.setInterval(refreshJobs, 2000);
-				if (!kbIntervalId) kbIntervalId = window.setInterval(refreshKnowledgeBases, 30000);
 				toggleRefreshBtn.textContent = "Pause Auto Refresh";
-				setStatus("Auto refresh resumed.", "success");
+				setStatus("Job auto refresh resumed.", "success");
 			} else {
 				if (jobsIntervalId) {
 					window.clearInterval(jobsIntervalId);
 					jobsIntervalId = null;
 				}
-				if (kbIntervalId) {
-					window.clearInterval(kbIntervalId);
-					kbIntervalId = null;
-				}
 				toggleRefreshBtn.textContent = "Resume Auto Refresh";
-				setStatus("Auto refresh paused.", "info");
+				setStatus("Job auto refresh paused.", "info");
 			}
 		});
 
@@ -612,7 +616,6 @@
 			await refreshKnowledgeBases();
 			await refreshJobs();
 			jobsIntervalId = window.setInterval(refreshJobs, 2000);
-			kbIntervalId = window.setInterval(refreshKnowledgeBases, 30000);
 			updateUploadButtonState();
 		}
 
