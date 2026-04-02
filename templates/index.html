@@ -1,0 +1,431 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Knowledge Upload Gateway</title>
+	<style>
+		:root {
+			--bg: #f3efe7;
+			--surface: #fff9ef;
+			--surface-strong: #efe4ce;
+			--ink: #2f261c;
+			--accent: #0f766e;
+			--accent-strong: #115e59;
+			--ok: #166534;
+			--warn: #9a3412;
+			--bad: #991b1b;
+			--ring: #d4b178;
+			--shadow: 0 8px 24px rgba(47, 38, 28, 0.12);
+		}
+
+		* { box-sizing: border-box; }
+
+		body {
+			margin: 0;
+			font-family: "Source Sans 3", "Segoe UI", sans-serif;
+			color: var(--ink);
+			background:
+				radial-gradient(circle at 20% 10%, #f5d9a8 0 18%, transparent 19%),
+				radial-gradient(circle at 85% 15%, #d6ebdd 0 14%, transparent 15%),
+				linear-gradient(170deg, #f8f3eb, #ece4d7 72%);
+			min-height: 100vh;
+		}
+
+		.page {
+			max-width: 1200px;
+			margin: 0 auto;
+			padding: 24px;
+		}
+
+		.title {
+			margin: 0 0 8px;
+			font-family: "Bree Serif", Georgia, serif;
+			font-size: clamp(1.8rem, 3vw, 2.5rem);
+			letter-spacing: 0.01em;
+		}
+
+		.subtitle {
+			margin: 0 0 20px;
+			color: #564537;
+			max-width: 70ch;
+		}
+
+		.panel {
+			background: var(--surface);
+			border: 2px solid var(--ring);
+			border-radius: 14px;
+			box-shadow: var(--shadow);
+			padding: 16px;
+		}
+
+		.upload-grid {
+			display: grid;
+			gap: 14px;
+			grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+			align-items: end;
+		}
+
+		label {
+			font-weight: 700;
+			display: block;
+			margin-bottom: 6px;
+		}
+
+		select, input[type="file"], button {
+			width: 100%;
+			padding: 10px 12px;
+			border-radius: 8px;
+			border: 1px solid #b8a180;
+			font: inherit;
+			background: #fffdf8;
+			color: var(--ink);
+		}
+
+		button {
+			background: var(--accent);
+			border: none;
+			color: #f5fffd;
+			font-weight: 700;
+			cursor: pointer;
+			transition: transform 120ms ease, background 120ms ease;
+		}
+
+		button:hover { background: var(--accent-strong); }
+		button:active { transform: translateY(1px); }
+		button:disabled { opacity: 0.6; cursor: not-allowed; }
+
+		.status {
+			margin: 14px 0 0;
+			font-weight: 600;
+			min-height: 22px;
+		}
+
+		.board {
+			display: grid;
+			gap: 14px;
+			margin-top: 18px;
+			grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+		}
+
+		.lane h2 {
+			margin: 0 0 10px;
+			font-size: 1.1rem;
+			font-family: "Bree Serif", Georgia, serif;
+			display: flex;
+			justify-content: space-between;
+			align-items: baseline;
+		}
+
+		.count {
+			font-size: 0.95rem;
+			color: #5f4a3c;
+		}
+
+		.cards {
+			display: grid;
+			gap: 10px;
+			max-height: 58vh;
+			overflow: auto;
+			padding-right: 2px;
+		}
+
+		.card {
+			background: #fff;
+			border: 1px solid #dcc5a5;
+			border-left: 6px solid #b18a50;
+			border-radius: 10px;
+			padding: 10px;
+			animation: pop 240ms ease;
+		}
+
+		.card.completed { border-left-color: var(--ok); }
+		.card.failed { border-left-color: var(--bad); }
+
+		.filename {
+			font-weight: 700;
+			word-break: break-word;
+		}
+
+		.meta {
+			font-size: 0.9rem;
+			color: #6a5444;
+			margin-top: 4px;
+		}
+
+		.error {
+			margin-top: 6px;
+			color: var(--bad);
+			font-size: 0.9rem;
+			white-space: pre-wrap;
+			max-height: 120px;
+			overflow: auto;
+		}
+
+		.retry-btn {
+			margin-top: 8px;
+			background: #7f1d1d;
+			color: #fff5f5;
+			border: none;
+			border-radius: 8px;
+			padding: 8px 10px;
+			cursor: pointer;
+			font-weight: 700;
+		}
+
+		.retry-btn:hover { background: #991b1b; }
+
+		.empty {
+			padding: 12px;
+			border: 1px dashed #c6af8f;
+			border-radius: 10px;
+			color: #745d49;
+			background: rgba(255, 255, 255, 0.45);
+			font-size: 0.95rem;
+		}
+
+		@keyframes pop {
+			from { opacity: 0; transform: translateY(8px); }
+			to { opacity: 1; transform: translateY(0); }
+		}
+
+		@media (max-width: 760px) {
+			.page { padding: 14px; }
+			.board { grid-template-columns: 1fr; }
+			.cards { max-height: none; }
+		}
+	</style>
+	<link rel="preconnect" href="https://fonts.googleapis.com">
+	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+	<link href="https://fonts.googleapis.com/css2?family=Bree+Serif&family=Source+Sans+3:wght@400;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+	<main class="page">
+		<h1 class="title">Knowledge Upload Gateway</h1>
+		<p class="subtitle">Use this page as the single upload point. Pick a knowledge base, add files, and track them in Waiting, Completed, and Failed lanes.</p>
+
+		<section class="panel">
+			<div class="upload-grid">
+				<div>
+					<label for="kbSelect">Knowledge Base</label>
+					<select id="kbSelect"></select>
+				</div>
+				<div>
+					<label for="fileInput">Files</label>
+					<input id="fileInput" type="file" multiple>
+				</div>
+				<div>
+					<button id="uploadBtn" type="button">Queue Upload</button>
+				</div>
+			</div>
+			<div id="statusText" class="status"></div>
+		</section>
+
+		<section class="board">
+			<article class="panel lane">
+				<h2>Waiting <span id="waitingCount" class="count">0</span></h2>
+				<div id="waitingCards" class="cards"></div>
+			</article>
+			<article class="panel lane">
+				<h2>Completed <span id="completedCount" class="count">0</span></h2>
+				<div id="completedCards" class="cards"></div>
+			</article>
+			<article class="panel lane">
+				<h2>Failed <span id="failedCount" class="count">0</span></h2>
+				<div id="failedCards" class="cards"></div>
+			</article>
+		</section>
+	</main>
+
+	<script>
+		const kbSelect = document.getElementById("kbSelect");
+		const fileInput = document.getElementById("fileInput");
+		const uploadBtn = document.getElementById("uploadBtn");
+		const statusText = document.getElementById("statusText");
+
+		const waitingCards = document.getElementById("waitingCards");
+		const completedCards = document.getElementById("completedCards");
+		const failedCards = document.getElementById("failedCards");
+		const waitingCount = document.getElementById("waitingCount");
+		const completedCount = document.getElementById("completedCount");
+		const failedCount = document.getElementById("failedCount");
+
+		function setStatus(message, kind = "info") {
+			statusText.textContent = message;
+			if (kind === "error") statusText.style.color = "#991b1b";
+			else if (kind === "success") statusText.style.color = "#166534";
+			else statusText.style.color = "#2f261c";
+		}
+
+		function formatDate(value) {
+			if (!value) return "-";
+			const d = new Date(value);
+			if (Number.isNaN(d.getTime())) return value;
+			return d.toLocaleString();
+		}
+
+		function renderCards(target, items, state) {
+			target.innerHTML = "";
+			if (!items.length) {
+				const div = document.createElement("div");
+				div.className = "empty";
+				div.textContent = "No files";
+				target.appendChild(div);
+				return;
+			}
+
+			items.forEach((item) => {
+				const card = document.createElement("div");
+				card.className = `card ${state}`;
+
+				const label = item.status === "processing" ? "Processing" : item.status;
+				const kb = item.kb_name || item.kb_id || "-";
+
+				card.innerHTML = `
+					<div class="filename">${item.filename}</div>
+					<div class="meta">KB: ${kb}</div>
+					<div class="meta">State: ${label}</div>
+					<div class="meta">Attempt: ${item.attempt_count}/${item.max_attempts}</div>
+					<div class="meta">Updated: ${formatDate(item.updated_at)}</div>
+				`;
+
+				if (state === "failed" && item.last_error) {
+					const err = document.createElement("div");
+					err.className = "error";
+					err.textContent = item.last_error;
+					card.appendChild(err);
+
+					const retryBtn = document.createElement("button");
+					retryBtn.className = "retry-btn";
+					retryBtn.type = "button";
+					retryBtn.textContent = "Retry";
+					retryBtn.addEventListener("click", async () => {
+						retryBtn.disabled = true;
+						try {
+							const res = await fetch(`/api/jobs/${item.id}/retry`, { method: "POST" });
+							if (!res.ok) {
+								const data = await res.json().catch(() => ({}));
+								throw new Error(data.error || `HTTP ${res.status}`);
+							}
+							setStatus(`Retry queued for ${item.filename}`, "success");
+							await refreshJobs();
+						} catch (err) {
+							setStatus(`Retry failed: ${err.message}`, "error");
+						} finally {
+							retryBtn.disabled = false;
+						}
+					});
+					card.appendChild(retryBtn);
+				}
+
+				target.appendChild(card);
+			});
+		}
+
+		async function refreshKnowledgeBases() {
+			kbSelect.innerHTML = "";
+			const placeholder = document.createElement("option");
+			placeholder.value = "";
+			placeholder.textContent = "Loading knowledge bases...";
+			kbSelect.appendChild(placeholder);
+
+			try {
+				const res = await fetch("/api/knowledge-bases");
+				const data = await res.json();
+				if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+
+				kbSelect.innerHTML = "";
+				data.items.forEach((kb) => {
+					const option = document.createElement("option");
+					option.value = kb.id;
+					option.textContent = kb.name;
+					option.dataset.name = kb.name;
+					kbSelect.appendChild(option);
+				});
+
+				if (!data.items.length) {
+					const none = document.createElement("option");
+					none.value = "";
+					none.textContent = "No knowledge bases found";
+					kbSelect.appendChild(none);
+				}
+			} catch (err) {
+				kbSelect.innerHTML = "";
+				const errOpt = document.createElement("option");
+				errOpt.value = "";
+				errOpt.textContent = "Failed to load knowledge bases";
+				kbSelect.appendChild(errOpt);
+				setStatus(`Knowledge base load failed: ${err.message}`, "error");
+			}
+		}
+
+		async function refreshJobs() {
+			try {
+				const res = await fetch("/api/jobs");
+				const data = await res.json();
+				if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+
+				renderCards(waitingCards, data.waiting || [], "waiting");
+				renderCards(completedCards, data.completed || [], "completed");
+				renderCards(failedCards, data.failed || [], "failed");
+
+				waitingCount.textContent = String((data.waiting || []).length);
+				completedCount.textContent = String((data.completed || []).length);
+				failedCount.textContent = String((data.failed || []).length);
+			} catch (err) {
+				setStatus(`Failed to refresh jobs: ${err.message}`, "error");
+			}
+		}
+
+		uploadBtn.addEventListener("click", async () => {
+			const kbId = kbSelect.value;
+			const kbName = kbSelect.options[kbSelect.selectedIndex]?.textContent || "";
+			const files = fileInput.files;
+
+			if (!kbId) {
+				setStatus("Please select a knowledge base.", "error");
+				return;
+			}
+			if (!files || files.length === 0) {
+				setStatus("Please select at least one file.", "error");
+				return;
+			}
+
+			const formData = new FormData();
+			formData.append("kb_id", kbId);
+			formData.append("kb_name", kbName);
+			Array.from(files).forEach((file) => formData.append("files", file));
+
+			uploadBtn.disabled = true;
+			setStatus("Queueing files...");
+			try {
+				const res = await fetch("/api/jobs", {
+					method: "POST",
+					body: formData
+				});
+				const data = await res.json();
+				if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+
+				const created = (data.created_ids || []).length;
+				const rejected = (data.rejected || []).length;
+				setStatus(`Queued ${created} file(s). Rejected ${rejected}.`, "success");
+				fileInput.value = "";
+				await refreshJobs();
+			} catch (err) {
+				setStatus(`Upload queue failed: ${err.message}`, "error");
+			} finally {
+				uploadBtn.disabled = false;
+			}
+		});
+
+		async function init() {
+			await refreshKnowledgeBases();
+			await refreshJobs();
+			window.setInterval(refreshJobs, 2000);
+			window.setInterval(refreshKnowledgeBases, 30000);
+		}
+
+		init();
+	</script>
+</body>
+</html>

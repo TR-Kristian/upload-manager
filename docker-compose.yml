@@ -1,0 +1,31 @@
+services:
+  upload-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: upload-gateway
+    network_mode: host
+    restart: always
+    environment:
+      - APP_HOST=0.0.0.0
+      - APP_PORT=8088
+      - DATA_DIR=/app/data
+      - OPENWEBUI_BASE_URL=http://127.0.0.1:3000
+      - OPENWEBUI_API_KEY=sk-3596cb2654514b03a802e79fcf798b12
+      - OPENWEBUI_API_KEY_HEADER=Authorization
+      - OPENWEBUI_API_KEY_PREFIX=Bearer
+      - WORKER_COUNT=3
+      - MAX_ATTEMPTS=4
+      - BASE_RETRY_SECONDS=2
+      - MAX_RETRY_SECONDS=60
+      - POLL_IDLE_SECONDS=1
+      - UPLOAD_TIMEOUT_SECONDS=300
+      - OPENWEBUI_KB_LIST_PATHS=/api/v1/knowledge,/api/knowledge,/api/v1/knowledge/list
+      - OPENWEBUI_UPLOAD_PATH_TEMPLATE=/api/v1/knowledge/{kb_id}/file
+      - ALLOWED_EXTENSIONS=.pdf,.doc,.docx,.txt,.md,.csv,.xlsx,.ppt,.pptx
+      - MAX_UPLOAD_BYTES=209715200
+    volumes:
+      - upload_gateway_data:/app/data
+
+volumes:
+  upload_gateway_data:
