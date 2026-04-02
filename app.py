@@ -25,7 +25,7 @@ OPENWEBUI_KB_LIST_PATHS = [
 	p.strip()
 	for p in os.getenv(
 		"OPENWEBUI_KB_LIST_PATHS",
-		"/api/v1/knowledge,/api/knowledge,/api/v1/knowledge/list",
+		"/api/v1/knowledge/,/api/v1/knowledge,/api/knowledge/,/api/knowledge",
 	).split(",")
 	if p.strip()
 ]
@@ -163,10 +163,9 @@ def fetch_knowledge_bases() -> list:
 		try:
 			response = session.get(url, headers=headers, timeout=30)
 			response.raise_for_status()
-			data = response.json()
-			normalized = normalize_kb_items(data)
-			if normalized:
-				return normalized
+			# Stop at the first endpoint that responds with 2xx, even if list is empty.
+			# Only fall through to the next candidate on connection errors or 4xx/5xx.
+			return normalize_kb_items(response.json())
 		except Exception as exc:
 			last_error = exc
 
