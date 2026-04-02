@@ -4,22 +4,22 @@
 	<meta charset="utf-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
   <title>HungaroControl – Knowledge Upload Gateway</title>
-  <link rel="icon" href="/static/HungaroControl_symbol.png" type="image/png">
+  <link rel="icon" href="{{ url_for('static', filename='HungaroControl_symbol.png') }}" type="image/png">
 	<style>
 		:root {
-			--bg-deep: #0a2f57;
-			--bg-mid: #0f4d86;
-			--bg-soft: #ecf4fb;
-			--surface: #ffffff;
-			--surface-alt: #f5f9fe;
-			--ink: #0f2238;
-			--ink-soft: #40566f;
-			--accent: #0073cf;
-			--accent-strong: #005da7;
-			--ok: #157347;
-			--bad: #b42318;
-			--ring: #8fb7dd;
-			--shadow: 0 14px 36px rgba(7, 37, 70, 0.18);
+			/* HungaroControl brand palette */
+			--hc-navy:    #0a2d5a;   /* dark nav / headings */
+			--hc-blue:    #2878c0;   /* logo / primary blue */
+			--hc-ltblue:  #dbeaf7;   /* light blue tints */
+			--hc-orange:  #f58220;   /* CTA / accent */
+			--hc-orange-d:#d96e12;   /* hover */
+			--surface:    #ffffff;
+			--surface-alt:#f4f8fd;
+			--ink:        #0a2d5a;
+			--ink-soft:   #3d5a7a;
+			--ok:         #157347;
+			--bad:        #c0392b;
+			--shadow:     0 4px 18px rgba(10, 45, 90, 0.10);
 		}
 
 		* { box-sizing: border-box; }
@@ -28,10 +28,7 @@
 			margin: 0;
 			font-family: "Public Sans", "Segoe UI", sans-serif;
 			color: var(--ink);
-			background:
-				linear-gradient(145deg, rgba(7, 45, 82, 0.94), rgba(14, 77, 132, 0.88)),
-				radial-gradient(circle at 85% 8%, rgba(98, 189, 255, 0.35), transparent 38%),
-				radial-gradient(circle at 9% 88%, rgba(1, 118, 205, 0.24), transparent 36%);
+			background: #f0f5fb;
 			min-height: 100vh;
 		}
 
@@ -47,12 +44,11 @@
 			align-items: center;
 			gap: 16px;
 			padding: 14px 18px;
-			background: linear-gradient(100deg, #0b3764, #0f558f);
-			border: 1px solid rgba(173, 211, 245, 0.45);
+			background: var(--hc-navy);
 			border-radius: 14px;
-			box-shadow: var(--shadow);
-			color: #eaf5ff;
-			margin-bottom: 16px;
+			box-shadow: 0 4px 16px rgba(10, 45, 90, 0.22);
+			color: #ffffff;
+			margin-bottom: 20px;
 		}
 
 		.brand-left {
@@ -77,15 +73,18 @@
 
 		.brand-sub {
 			font-size: 0.86rem;
-			opacity: 0.86;
+			opacity: 0.78;
+			color: #fff;
 		}
 
 		.brand-badge {
 			font-size: 0.82rem;
-			padding: 6px 10px;
+			padding: 6px 14px;
 			border-radius: 999px;
-			background: rgba(255, 255, 255, 0.14);
-			border: 1px solid rgba(255, 255, 255, 0.28);
+			background: var(--hc-orange);
+			color: #ffffff;
+			font-weight: 700;
+			letter-spacing: 0.02em;
 			white-space: nowrap;
 		}
 
@@ -95,19 +94,19 @@
 			font-weight: 700;
 			font-size: clamp(1.8rem, 3vw, 2.5rem);
 			letter-spacing: 0.03em;
-			color: #eef7ff;
+			color: var(--hc-navy);
 			text-transform: uppercase;
 		}
 
 		.subtitle {
 			margin: 0 0 20px;
-			color: #d7e8f8;
+			color: var(--ink-soft);
 			max-width: 70ch;
 		}
 
 		.panel {
 			background: var(--surface);
-			border: 1px solid #c6dbef;
+			border: 1px solid var(--hc-ltblue);
 			border-radius: 14px;
 			box-shadow: var(--shadow);
 			padding: 16px;
@@ -124,7 +123,7 @@
 			font-weight: 700;
 			display: block;
 			margin-bottom: 6px;
-			color: #11304f;
+			color: var(--hc-navy);
 		}
 
 		select, input[type="file"], button {
@@ -138,15 +137,15 @@
 		}
 
 		button {
-			background: var(--accent);
+			background: var(--hc-orange);
 			border: none;
-			color: #f5fffd;
+			color: #ffffff;
 			font-weight: 700;
 			cursor: pointer;
 			transition: transform 120ms ease, background 120ms ease;
 		}
 
-		button:hover { background: var(--accent-strong); }
+		button:hover { background: var(--hc-orange-d); }
 		button:active { transform: translateY(1px); }
 		button:disabled { opacity: 0.6; cursor: not-allowed; }
 
@@ -169,6 +168,7 @@
 			font-family: "Rajdhani", "Public Sans", sans-serif;
 			text-transform: uppercase;
 			letter-spacing: 0.04em;
+			color: var(--hc-navy);
 			display: flex;
 			justify-content: space-between;
 			align-items: baseline;
@@ -176,7 +176,8 @@
 
 		.count {
 			font-size: 0.95rem;
-			color: #3f5d7e;
+			color: var(--hc-blue);
+			font-weight: 700;
 		}
 
 		.cards {
@@ -188,16 +189,16 @@
 		}
 
 		.card {
-			background: var(--surface-alt);
-			border: 1px solid #c5d9ec;
-			border-left: 6px solid #3f87c8;
+			background: var(--surface);
+			border: 1px solid var(--hc-ltblue);
+			border-left: 6px solid var(--hc-orange);  /* waiting = orange accent */
 			border-radius: 10px;
 			padding: 10px;
 			animation: pop 240ms ease;
 		}
 
 		.card.completed { border-left-color: var(--ok); }
-		.card.failed { border-left-color: var(--bad); }
+		.card.failed    { border-left-color: var(--bad); }
 
 		.filename {
 			font-weight: 700;
@@ -206,7 +207,7 @@
 
 		.meta {
 			font-size: 0.9rem;
-			color: #456280;
+			color: var(--ink-soft);
 			margin-top: 4px;
 		}
 
@@ -221,8 +222,8 @@
 
 		.retry-btn {
 			margin-top: 8px;
-			background: #b42318;
-			color: #fff5f5;
+			background: var(--bad);
+			color: #ffffff;
 			border: none;
 			border-radius: 8px;
 			padding: 8px 10px;
@@ -230,14 +231,14 @@
 			font-weight: 700;
 		}
 
-		.retry-btn:hover { background: #991b1b; }
+		.retry-btn:hover { background: #a93226; }
 
 		.empty {
 			padding: 12px;
-			border: 1px dashed #a5c4e2;
+			border: 1px dashed var(--hc-ltblue);
 			border-radius: 10px;
-			color: #4c6783;
-			background: rgba(247, 252, 255, 0.8);
+			color: var(--ink-soft);
+			background: var(--surface-alt);
 			font-size: 0.95rem;
 		}
 
@@ -265,7 +266,7 @@
 		<header class="brand-bar">
 			<div class="brand-left">
 				<div class="brand-logo-wrap">
-					<img src="/static/HungaroControl_logos_noslogan.png" alt="HungaroControl" height="36">
+					<img src="{{ url_for('static', filename='HungaroControl_logos_noslogan.png') }}" alt="HungaroControl" height="36">
 				</div>
 				<div class="brand-sub">Internal Knowledge Operations</div>
 			</div>
@@ -323,9 +324,9 @@
 
 		function setStatus(message, kind = "info") {
 			statusText.textContent = message;
-			if (kind === "error") statusText.style.color = "#991b1b";
-			else if (kind === "success") statusText.style.color = "#166534";
-			else statusText.style.color = "#2f261c";
+			if (kind === "error") statusText.style.color = "#c0392b";
+			else if (kind === "success") statusText.style.color = "#157347";
+			else statusText.style.color = "#0a2d5a";
 		}
 
 		function formatDate(value) {
