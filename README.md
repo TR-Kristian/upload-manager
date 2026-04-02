@@ -60,7 +60,7 @@ Add this service to your existing compose file:
       - MAX_ATTEMPTS=4
       - BASE_RETRY_SECONDS=2
       - MAX_RETRY_SECONDS=60
-      - OPENWEBUI_KB_LIST_PATHS=/api/v1/knowledge,/api/knowledge,/api/v1/knowledge/list
+      - OPENWEBUI_KB_LIST_PATHS=/api/v1/knowledge/,/api/v1/knowledge,/api/knowledge/,/api/knowledge
       - OPENWEBUI_UPLOAD_PATH_TEMPLATE=/api/v1/knowledge/{kb_id}/file
     volumes:
       - upload_gateway_data:/app/data
