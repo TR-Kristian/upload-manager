@@ -384,7 +384,17 @@ def wait_for_openwebui_file_processing(file_id: str, headers: dict) -> tuple[boo
 	return False, f"Timed out waiting for file processing. Tried: {', '.join(attempt_summaries[-10:])}"
 
 
-def upload_to_openwebui_via_file_add(job: dict, headers: dict) -> tuple[bool, str]:
+def _humanize_processing_error(error_text: str) -> str:
+	if "127.0.0.1', port=5001" in error_text or "/v1/convert/file" in error_text:
+		return (
+			"Docling processing is unavailable in Open WebUI. "
+			"The Open WebUI container cannot reach Docling at http://127.0.0.1:5001. "
+			f"Original error: {error_text}"
+		)
+	return error_text
+
+
+def upload_to_openwebui_via_file_add(job: dict, headers: dict) -> tuple[str, str]:
 	kb_id = job["kb_id"]
 	attempt_summaries = []
 
@@ -405,7 +415,7 @@ def upload_to_openwebui_via_file_add(job: dict, headers: dict) -> tuple[bool, st
 			continue
 		if upload_response.status_code >= 400:
 			body = upload_response.text[:350].replace("\n", " ")
-			return False, f"File upload failed ({upload_response.status_code}) on {upload_path}: {body}"
+			return "fatal", f"File upload failed ({upload_response.status_code}) on {upload_path}: {body}"
 
 		try:
 			upload_payload = upload_response.json()
@@ -414,14 +424,14 @@ def upload_to_openwebui_via_file_add(job: dict, headers: dict) -> tuple[bool, st
 
 		file_id = _extract_file_id(upload_payload)
 		if not file_id:
-			return False, (
+			return "fatal", (
 				f"File upload succeeded but file id was missing from response on {upload_path}"
 			)
 
 		processed_ok, processed_detail = wait_for_openwebui_file_processing(file_id, headers)
 		attempt_summaries.append(processed_detail)
 		if not processed_ok:
-			return False, processed_detail
+			return "fatal", _humanize_processing_error(processed_detail)
 
 		for add_template in OPENWEBUI_KB_ADD_FILE_PATH_TEMPLATES:
 			add_path = add_template.format(kb_id=kb_id)
@@ -437,25 +447,27 @@ def upload_to_openwebui_via_file_add(job: dict, headers: dict) -> tuple[bool, st
 				f"POST {add_path} -> {add_response.status_code}"
 			)
 			if add_response.status_code < 400:
-				return True, ", ".join(attempt_summaries)
+				return "success", ", ".join(attempt_summaries)
 			if add_response.status_code in (404, 405):
 				continue
 
 			body = add_response.text[:350].replace("\n", " ")
-			return False, (
+			return "fatal", (
 				f"Attach file to knowledge failed ({add_response.status_code}) on {add_path}: {body}"
 			)
 
-	return False, ", ".join(attempt_summaries)
+	return "route-mismatch", ", ".join(attempt_summaries)
 
 
 def upload_to_openwebui(job: dict) -> None:
 	kb_id = job["kb_id"]
 	headers = build_auth_headers()
 
-	ok, detail = upload_to_openwebui_via_file_add(job, headers)
-	if ok:
+	file_add_result, detail = upload_to_openwebui_via_file_add(job, headers)
+	if file_add_result == "success":
 		return
+	if file_add_result == "fatal":
+		raise RuntimeError(detail)
 
 	targets: list[tuple[str, str]] = []
 	if OPENWEBUI_UPLOAD_PATH_TEMPLATE.strip():
