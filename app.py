@@ -4,12 +4,15 @@ import sqlite3
 import threading
 import time
 import uuid
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
 import requests
 from flask import Flask, jsonify, render_template, request
 from werkzeug.utils import secure_filename
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 
 APP_PORT = int(os.getenv("APP_PORT", "8088"))
@@ -62,6 +65,13 @@ OPENWEBUI_FILE_STATUS_PATH_TEMPLATES = [
 	if p.strip()
 ]
 
+HTTP_CONNECT_TIMEOUT_SECONDS = float(os.getenv("HTTP_CONNECT_TIMEOUT_SECONDS", "5"))
+HTTP_READ_TIMEOUT_SECONDS = float(os.getenv("HTTP_READ_TIMEOUT_SECONDS", "30"))
+HTTP_RETRY_TOTAL = int(os.getenv("HTTP_RETRY_TOTAL", "3"))
+HTTP_RETRY_BACKOFF = float(os.getenv("HTTP_RETRY_BACKOFF", "0.5"))
+HTTP_POOL_CONNECTIONS = int(os.getenv("HTTP_POOL_CONNECTIONS", "20"))
+HTTP_POOL_MAXSIZE = int(os.getenv("HTTP_POOL_MAXSIZE", "50"))
+
 WORKER_COUNT = int(os.getenv("WORKER_COUNT", "3"))
 MAX_ATTEMPTS = int(os.getenv("MAX_ATTEMPTS", "4"))
 BASE_RETRY_SECONDS = float(os.getenv("BASE_RETRY_SECONDS", "2"))
@@ -88,6 +98,7 @@ DB_PATH = DATA_DIR / "uploader.db"
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_BYTES
+logger = logging.getLogger(__name__)
 
 
 def utc_now_iso() -> str:
@@ -105,8 +116,33 @@ def ensure_dirs() -> None:
 
 def get_conn() -> sqlite3.Connection:
 	conn = sqlite3.connect(DB_PATH, timeout=30, check_same_thread=False)
+	conn.execute("PRAGMA journal_mode=WAL")
+	conn.execute("PRAGMA synchronous=NORMAL")
+	conn.execute("PRAGMA busy_timeout=5000")
 	conn.row_factory = sqlite3.Row
 	return conn
+
+
+def create_http_session() -> requests.Session:
+	retry = Retry(
+		total=HTTP_RETRY_TOTAL,
+		connect=HTTP_RETRY_TOTAL,
+		read=HTTP_RETRY_TOTAL,
+		status=HTTP_RETRY_TOTAL,
+		backoff_factor=HTTP_RETRY_BACKOFF,
+		status_forcelist=(429, 500, 502, 503, 504),
+		allowed_methods=frozenset({"GET", "POST", "PUT", "DELETE"}),
+		raise_on_status=False,
+	)
+	adapter = HTTPAdapter(
+		max_retries=retry,
+		pool_connections=HTTP_POOL_CONNECTIONS,
+		pool_maxsize=HTTP_POOL_MAXSIZE,
+	)
+	session = requests.Session()
+	session.mount("http://", adapter)
+	session.mount("https://", adapter)
+	return session
 
 
 def init_db() -> None:
@@ -201,15 +237,20 @@ def normalize_kb_items(payload) -> list:
 
 
 def fetch_knowledge_bases() -> list:
-	session = requests.Session()
+	session = create_http_session()
+	header_options = build_header_options()
 
 	errors = []
 	for path in OPENWEBUI_KB_LIST_PATHS:
 		url = f"{OPENWEBUI_BASE_URL}{path}"
-		for headers in build_header_options():
+		for headers in header_options:
 			auth_mode = "auth" if headers else "no-auth"
 			try:
-				response = session.get(url, headers=headers, timeout=30)
+				response = session.get(
+					url,
+					headers=headers,
+					timeout=(HTTP_CONNECT_TIMEOUT_SECONDS, HTTP_READ_TIMEOUT_SECONDS),
+				)
 				if response.status_code >= 400:
 					errors.append(f"GET {path} [{auth_mode}] -> {response.status_code}")
 					continue
@@ -304,32 +345,37 @@ def mark_failed(job_id: str, message: str) -> None:
 def claim_next_job():
 	now_epoch = epoch_seconds()
 	now_iso = utc_now_iso()
-	with get_conn() as conn:
-		conn.execute("BEGIN IMMEDIATE")
-		row = conn.execute(
-			"""
-			SELECT *
-			FROM jobs
-			WHERE status='waiting' AND next_attempt_at <= ?
-			ORDER BY created_at ASC
-			LIMIT 1
-			""",
-			(now_epoch,),
-		).fetchone()
-		if not row:
-			conn.commit()
-			return None
+	try:
+		with get_conn() as conn:
+			conn.execute("BEGIN IMMEDIATE")
+			row = conn.execute(
+				"""
+				SELECT *
+				FROM jobs
+				WHERE status='waiting' AND next_attempt_at <= ?
+				ORDER BY created_at ASC
+				LIMIT 1
+				""",
+				(now_epoch,),
+			).fetchone()
+			if not row:
+				conn.commit()
+				return None
 
-		job_id = row["id"]
-		conn.execute(
-			"""
-			UPDATE jobs
-			SET status='processing', attempt_count=attempt_count+1, updated_at=?
-			WHERE id=?
-			""",
-			(now_iso, job_id),
-		)
-		conn.commit()
+			job_id = row["id"]
+			conn.execute(
+				"""
+				UPDATE jobs
+				SET status='processing', attempt_count=attempt_count+1, updated_at=?
+				WHERE id=?
+				""",
+				(now_iso, job_id),
+			)
+			conn.commit()
+	except sqlite3.OperationalError as exc:
+		if "locked" in str(exc).lower():
+			return None
+		raise
 
 	return get_job(job_id)
 
@@ -354,13 +400,18 @@ def _extract_file_id(payload) -> str | None:
 def wait_for_openwebui_file_processing(file_id: str, headers: dict) -> tuple[bool, str]:
 	deadline = time.time() + FILE_PROCESS_WAIT_SECONDS
 	attempt_summaries = []
+	session = create_http_session()
 
 	while time.time() < deadline:
 		for status_template in OPENWEBUI_FILE_STATUS_PATH_TEMPLATES:
 			status_path = status_template.format(file_id=file_id)
 			status_url = f"{OPENWEBUI_BASE_URL}{status_path}"
 			try:
-				response = requests.get(status_url, headers=headers, timeout=30)
+				response = session.get(
+					status_url,
+					headers=headers,
+					timeout=(HTTP_CONNECT_TIMEOUT_SECONDS, HTTP_READ_TIMEOUT_SECONDS),
+				)
 				if response.status_code in (404, 405):
 					attempt_summaries.append(f"GET {status_path} -> {response.status_code}")
 					continue
@@ -397,17 +448,18 @@ def _humanize_processing_error(error_text: str) -> str:
 def upload_to_openwebui_via_file_add(job: dict, headers: dict) -> tuple[str, str]:
 	kb_id = job["kb_id"]
 	attempt_summaries = []
+	session = create_http_session()
 
 	for upload_path in OPENWEBUI_FILE_UPLOAD_PATHS:
 		upload_url = f"{OPENWEBUI_BASE_URL}{upload_path}"
 		with open(job["stored_path"], "rb") as file_obj:
 			files = {"file": (job["filename"], file_obj)}
-			upload_response = requests.post(
+			upload_response = session.post(
 				upload_url,
 				headers=headers,
 				params={"process": "true", "process_in_background": "false"},
 				files=files,
-				timeout=UPLOAD_TIMEOUT_SECONDS,
+				timeout=(HTTP_CONNECT_TIMEOUT_SECONDS, UPLOAD_TIMEOUT_SECONDS),
 			)
 
 		attempt_summaries.append(f"POST {upload_path} -> {upload_response.status_code}")
@@ -436,11 +488,11 @@ def upload_to_openwebui_via_file_add(job: dict, headers: dict) -> tuple[str, str
 		for add_template in OPENWEBUI_KB_ADD_FILE_PATH_TEMPLATES:
 			add_path = add_template.format(kb_id=kb_id)
 			add_url = f"{OPENWEBUI_BASE_URL}{add_path}"
-			add_response = requests.post(
+			add_response = session.post(
 				add_url,
 				headers={**headers, "Content-Type": "application/json"},
 				json={"file_id": file_id},
-				timeout=UPLOAD_TIMEOUT_SECONDS,
+				timeout=(HTTP_CONNECT_TIMEOUT_SECONDS, UPLOAD_TIMEOUT_SECONDS),
 			)
 
 			attempt_summaries.append(
@@ -462,6 +514,7 @@ def upload_to_openwebui_via_file_add(job: dict, headers: dict) -> tuple[str, str
 def upload_to_openwebui(job: dict) -> None:
 	kb_id = job["kb_id"]
 	headers = build_auth_headers()
+	session = create_http_session()
 
 	file_add_result, detail = upload_to_openwebui_via_file_add(job, headers)
 	if file_add_result == "success":
@@ -502,12 +555,12 @@ def upload_to_openwebui(job: dict) -> None:
 
 		with open(job["stored_path"], "rb") as file_obj:
 			files = {"file": (job["filename"], file_obj)}
-			response = requests.request(
+			response = session.request(
 				method,
 				url,
 				headers=headers,
 				files=files,
-				timeout=UPLOAD_TIMEOUT_SECONDS,
+				timeout=(HTTP_CONNECT_TIMEOUT_SECONDS, UPLOAD_TIMEOUT_SECONDS),
 			)
 
 		if response.status_code < 400:
@@ -611,11 +664,15 @@ def run_worker(stop_event: threading.Event) -> None:
 		if not job:
 			time.sleep(POLL_IDLE_SECONDS)
 			continue
+		if not Path(job["stored_path"]).exists():
+			mark_failed(job["id"], f"Stored file not found: {job['stored_path']}")
+			continue
 
 		try:
 			upload_to_openwebui(job)
 			update_job_status(job["id"], "completed", None)
 		except Exception as exc:
+			logger.exception("Upload worker error for job %s", job["id"])
 			latest = get_job(job["id"])
 			if not latest:
 				continue
