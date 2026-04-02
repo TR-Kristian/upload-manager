@@ -354,6 +354,12 @@
 		let jobsIntervalId = null;
 		let kbIntervalId = null;
 
+		function updateUploadButtonState() {
+			const hasKb = Boolean(kbSelect.value);
+			const hasFiles = Boolean(fileInput.files && fileInput.files.length > 0);
+			uploadBtn.disabled = !(hasKb && hasFiles);
+		}
+
 		function setStatus(message, kind = "info") {
 			statusText.textContent = message;
 			if (kind === "error") statusText.style.color = "#c0392b";
@@ -453,12 +459,14 @@
 					none.textContent = "No knowledge bases found";
 					kbSelect.appendChild(none);
 				}
+				updateUploadButtonState();
 			} catch (err) {
 				kbSelect.innerHTML = "";
 				const errOpt = document.createElement("option");
 				errOpt.value = "";
 				errOpt.textContent = "Failed to load knowledge bases";
 				kbSelect.appendChild(errOpt);
+				updateUploadButtonState();
 				setStatus(`Knowledge base load failed: ${err.message}`, "error");
 			}
 		}
@@ -519,8 +527,12 @@
 				setStatus(`Upload queue failed: ${err.message}`, "error");
 			} finally {
 				uploadBtn.disabled = false;
+				updateUploadButtonState();
 			}
 		});
+
+		kbSelect.addEventListener("change", updateUploadButtonState);
+		fileInput.addEventListener("change", updateUploadButtonState);
 
 		toggleRefreshBtn.addEventListener("click", () => {
 			autoRefreshEnabled = !autoRefreshEnabled;
@@ -560,10 +572,12 @@
 		});
 
 		async function init() {
+			uploadBtn.disabled = true;
 			await refreshKnowledgeBases();
 			await refreshJobs();
 			jobsIntervalId = window.setInterval(refreshJobs, 2000);
 			kbIntervalId = window.setInterval(refreshKnowledgeBases, 30000);
+			updateUploadButtonState();
 		}
 
 		init();

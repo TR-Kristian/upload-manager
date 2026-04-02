@@ -25,7 +25,7 @@ OPENWEBUI_KB_LIST_PATHS = [
 	p.strip()
 	for p in os.getenv(
 		"OPENWEBUI_KB_LIST_PATHS",
-		"/api/v1/knowledge/,/api/v1/knowledge,/api/knowledge/,/api/knowledge",
+		"/api/v1/knowledge/,/api/v1/knowledge,/api/knowledge/,/api/knowledge,/api/v1/knowledge/search?page=1",
 	).split(",")
 	if p.strip()
 ]
@@ -178,20 +178,25 @@ def fetch_knowledge_bases() -> list:
 	headers = build_auth_headers()
 	session = requests.Session()
 
-	last_error = None
+	errors = []
 	for path in OPENWEBUI_KB_LIST_PATHS:
 		url = f"{OPENWEBUI_BASE_URL}{path}"
 		try:
 			response = session.get(url, headers=headers, timeout=30)
-			response.raise_for_status()
+			if response.status_code >= 400:
+				errors.append(f"GET {path} -> {response.status_code}")
+				continue
 			# Stop at the first endpoint that responds with 2xx, even if list is empty.
 			# Only fall through to the next candidate on connection errors or 4xx/5xx.
-			return normalize_kb_items(response.json())
+			try:
+				return normalize_kb_items(response.json())
+			except Exception as exc:
+				errors.append(f"GET {path} -> invalid JSON ({exc})")
 		except Exception as exc:
-			last_error = exc
+			errors.append(f"GET {path} -> {exc}")
 
-	if last_error:
-		raise RuntimeError(f"Unable to fetch knowledge bases: {last_error}")
+	if errors:
+		raise RuntimeError(f"Unable to fetch knowledge bases. Tried: {', '.join(errors)}")
 	raise RuntimeError("Unable to fetch knowledge bases: no valid endpoint configured")
 
 
