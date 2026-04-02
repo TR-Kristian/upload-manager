@@ -3,57 +3,111 @@
 <head>
 	<meta charset="utf-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
-	<title>Knowledge Upload Gateway</title>
+  <title>HungaroControl – Knowledge Upload Gateway</title>
+  <link rel="icon" href="/static/HungaroControl_symbol.png" type="image/png">
 	<style>
 		:root {
-			--bg: #f3efe7;
-			--surface: #fff9ef;
-			--surface-strong: #efe4ce;
-			--ink: #2f261c;
-			--accent: #0f766e;
-			--accent-strong: #115e59;
-			--ok: #166534;
-			--warn: #9a3412;
-			--bad: #991b1b;
-			--ring: #d4b178;
-			--shadow: 0 8px 24px rgba(47, 38, 28, 0.12);
+			--bg-deep: #0a2f57;
+			--bg-mid: #0f4d86;
+			--bg-soft: #ecf4fb;
+			--surface: #ffffff;
+			--surface-alt: #f5f9fe;
+			--ink: #0f2238;
+			--ink-soft: #40566f;
+			--accent: #0073cf;
+			--accent-strong: #005da7;
+			--ok: #157347;
+			--bad: #b42318;
+			--ring: #8fb7dd;
+			--shadow: 0 14px 36px rgba(7, 37, 70, 0.18);
 		}
 
 		* { box-sizing: border-box; }
 
 		body {
 			margin: 0;
-			font-family: "Source Sans 3", "Segoe UI", sans-serif;
+			font-family: "Public Sans", "Segoe UI", sans-serif;
 			color: var(--ink);
 			background:
-				radial-gradient(circle at 20% 10%, #f5d9a8 0 18%, transparent 19%),
-				radial-gradient(circle at 85% 15%, #d6ebdd 0 14%, transparent 15%),
-				linear-gradient(170deg, #f8f3eb, #ece4d7 72%);
+				linear-gradient(145deg, rgba(7, 45, 82, 0.94), rgba(14, 77, 132, 0.88)),
+				radial-gradient(circle at 85% 8%, rgba(98, 189, 255, 0.35), transparent 38%),
+				radial-gradient(circle at 9% 88%, rgba(1, 118, 205, 0.24), transparent 36%);
 			min-height: 100vh;
 		}
 
 		.page {
 			max-width: 1200px;
 			margin: 0 auto;
-			padding: 24px;
+			padding: 26px 24px;
+		}
+
+		.brand-bar {
+			display: flex;
+			justify-content: space-between;
+			align-items: center;
+			gap: 16px;
+			padding: 14px 18px;
+			background: linear-gradient(100deg, #0b3764, #0f558f);
+			border: 1px solid rgba(173, 211, 245, 0.45);
+			border-radius: 14px;
+			box-shadow: var(--shadow);
+			color: #eaf5ff;
+			margin-bottom: 16px;
+		}
+
+		.brand-left {
+			display: flex;
+			align-items: center;
+			gap: 14px;
+		}
+
+		.brand-logo-wrap {
+			background: #ffffff;
+			border-radius: 8px;
+			padding: 7px 14px;
+			display: flex;
+			align-items: center;
+		}
+
+		.brand-logo-wrap img {
+			height: 36px;
+			width: auto;
+			display: block;
+		}
+
+		.brand-sub {
+			font-size: 0.86rem;
+			opacity: 0.86;
+		}
+
+		.brand-badge {
+			font-size: 0.82rem;
+			padding: 6px 10px;
+			border-radius: 999px;
+			background: rgba(255, 255, 255, 0.14);
+			border: 1px solid rgba(255, 255, 255, 0.28);
+			white-space: nowrap;
 		}
 
 		.title {
-			margin: 0 0 8px;
-			font-family: "Bree Serif", Georgia, serif;
+			margin: 0 0 6px;
+			font-family: "Rajdhani", "Public Sans", sans-serif;
+			font-weight: 700;
 			font-size: clamp(1.8rem, 3vw, 2.5rem);
-			letter-spacing: 0.01em;
+			letter-spacing: 0.03em;
+			color: #eef7ff;
+			text-transform: uppercase;
 		}
 
 		.subtitle {
 			margin: 0 0 20px;
-			color: #564537;
+			color: #d7e8f8;
 			max-width: 70ch;
 		}
 
 		.panel {
 			background: var(--surface);
-			border: 2px solid var(--ring);
+			border: 1px solid #c6dbef;
 			border-radius: 14px;
 			box-shadow: var(--shadow);
 			padding: 16px;
@@ -70,15 +124,16 @@
 			font-weight: 700;
 			display: block;
 			margin-bottom: 6px;
+			color: #11304f;
 		}
 
 		select, input[type="file"], button {
 			width: 100%;
 			padding: 10px 12px;
 			border-radius: 8px;
-			border: 1px solid #b8a180;
+			border: 1px solid #b8cee4;
 			font: inherit;
-			background: #fffdf8;
+			background: #f9fcff;
 			color: var(--ink);
 		}
 
@@ -111,7 +166,9 @@
 		.lane h2 {
 			margin: 0 0 10px;
 			font-size: 1.1rem;
-			font-family: "Bree Serif", Georgia, serif;
+			font-family: "Rajdhani", "Public Sans", sans-serif;
+			text-transform: uppercase;
+			letter-spacing: 0.04em;
 			display: flex;
 			justify-content: space-between;
 			align-items: baseline;
@@ -119,7 +176,7 @@
 
 		.count {
 			font-size: 0.95rem;
-			color: #5f4a3c;
+			color: #3f5d7e;
 		}
 
 		.cards {
@@ -131,9 +188,9 @@
 		}
 
 		.card {
-			background: #fff;
-			border: 1px solid #dcc5a5;
-			border-left: 6px solid #b18a50;
+			background: var(--surface-alt);
+			border: 1px solid #c5d9ec;
+			border-left: 6px solid #3f87c8;
 			border-radius: 10px;
 			padding: 10px;
 			animation: pop 240ms ease;
@@ -149,7 +206,7 @@
 
 		.meta {
 			font-size: 0.9rem;
-			color: #6a5444;
+			color: #456280;
 			margin-top: 4px;
 		}
 
@@ -164,7 +221,7 @@
 
 		.retry-btn {
 			margin-top: 8px;
-			background: #7f1d1d;
+			background: #b42318;
 			color: #fff5f5;
 			border: none;
 			border-radius: 8px;
@@ -177,10 +234,10 @@
 
 		.empty {
 			padding: 12px;
-			border: 1px dashed #c6af8f;
+			border: 1px dashed #a5c4e2;
 			border-radius: 10px;
-			color: #745d49;
-			background: rgba(255, 255, 255, 0.45);
+			color: #4c6783;
+			background: rgba(247, 252, 255, 0.8);
 			font-size: 0.95rem;
 		}
 
@@ -191,16 +248,30 @@
 
 		@media (max-width: 760px) {
 			.page { padding: 14px; }
+			.brand-bar {
+				flex-direction: column;
+				align-items: flex-start;
+			}
 			.board { grid-template-columns: 1fr; }
 			.cards { max-height: none; }
 		}
 	</style>
 	<link rel="preconnect" href="https://fonts.googleapis.com">
 	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-	<link href="https://fonts.googleapis.com/css2?family=Bree+Serif&family=Source+Sans+3:wght@400;600;700&display=swap" rel="stylesheet">
+	<link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;600;700&family=Rajdhani:wght@600;700&display=swap" rel="stylesheet">
 </head>
 <body>
 	<main class="page">
+		<header class="brand-bar">
+			<div class="brand-left">
+				<div class="brand-logo-wrap">
+					<img src="/static/HungaroControl_logos_noslogan.png" alt="HungaroControl" height="36">
+				</div>
+				<div class="brand-sub">Internal Knowledge Operations</div>
+			</div>
+			<div class="brand-badge">Document Intake Gateway</div>
+		</header>
+
 		<h1 class="title">Knowledge Upload Gateway</h1>
 		<p class="subtitle">Use this page as the single upload point. Pick a knowledge base, add files, and track them in Waiting, Completed, and Failed lanes.</p>
 

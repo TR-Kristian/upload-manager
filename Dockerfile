@@ -17,6 +17,7 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 
 COPY app.py /app/app.py
 COPY templates /app/templates
+COPY static /app/static
 
 RUN useradd --create-home --uid 10001 appuser \
 	&& mkdir -p /app/data/uploads \
