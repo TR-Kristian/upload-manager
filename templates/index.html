@@ -315,7 +315,9 @@
 			<div id="statusText" class="status"></div>
 			<div class="toolbar">
 				<button id="toggleRefreshBtn" class="ghost-btn" type="button">Pause Auto Refresh</button>
+				<button id="clearWaitingBtn" class="ghost-btn" type="button">Clear Waiting</button>
 				<button id="clearFailedBtn" class="ghost-btn" type="button">Clear Failed Files</button>
+				<button id="clearAllBtn" class="ghost-btn" type="button">Clear All</button>
 			</div>
 		</section>
 
@@ -341,7 +343,9 @@
 		const uploadBtn = document.getElementById("uploadBtn");
 		const statusText = document.getElementById("statusText");
 		const toggleRefreshBtn = document.getElementById("toggleRefreshBtn");
+		const clearWaitingBtn = document.getElementById("clearWaitingBtn");
 		const clearFailedBtn = document.getElementById("clearFailedBtn");
+		const clearAllBtn = document.getElementById("clearAllBtn");
 
 		const waitingCards = document.getElementById("waitingCards");
 		const completedCards = document.getElementById("completedCards");
@@ -568,6 +572,38 @@
 				setStatus(`Failed to clear failed files: ${err.message}`, "error");
 			} finally {
 				clearFailedBtn.disabled = false;
+			}
+		});
+
+		clearWaitingBtn.addEventListener("click", async () => {
+			if (!window.confirm("Clear all waiting and processing files from the list?")) return;
+			clearWaitingBtn.disabled = true;
+			try {
+				const res = await fetch("/api/jobs/waiting/clear", { method: "POST" });
+				const data = await res.json().catch(() => ({}));
+				if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+				setStatus(`Cleared ${data.deleted || 0} waiting file(s).`, "success");
+				await refreshJobs();
+			} catch (err) {
+				setStatus(`Failed to clear waiting files: ${err.message}`, "error");
+			} finally {
+				clearWaitingBtn.disabled = false;
+			}
+		});
+
+		clearAllBtn.addEventListener("click", async () => {
+			if (!window.confirm("Clear ALL files from waiting, completed, and failed lists?")) return;
+			clearAllBtn.disabled = true;
+			try {
+				const res = await fetch("/api/jobs/clear", { method: "POST" });
+				const data = await res.json().catch(() => ({}));
+				if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+				setStatus(`Cleared ${data.deleted || 0} file(s) from all lists.`, "success");
+				await refreshJobs();
+			} catch (err) {
+				setStatus(`Failed to clear all files: ${err.message}`, "error");
+			} finally {
+				clearAllBtn.disabled = false;
 			}
 		});
 

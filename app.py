@@ -477,6 +477,52 @@ def clear_failed_jobs() -> int:
 	return len(rows)
 
 
+def clear_jobs_by_status(statuses: tuple[str, ...]) -> int:
+	placeholders = ",".join(["?" for _ in statuses])
+	rows = []
+	with get_conn() as conn:
+		rows = conn.execute(
+			f"SELECT id, stored_path FROM jobs WHERE status IN ({placeholders})",
+			statuses,
+		).fetchall()
+
+		conn.execute(
+			f"DELETE FROM jobs WHERE status IN ({placeholders})",
+			statuses,
+		)
+
+	for row in rows:
+		stored_path = row["stored_path"]
+		if stored_path:
+			try:
+				path_obj = Path(stored_path)
+				if path_obj.exists():
+					path_obj.unlink()
+			except Exception:
+				pass
+
+	return len(rows)
+
+
+def clear_all_jobs() -> int:
+	rows = []
+	with get_conn() as conn:
+		rows = conn.execute("SELECT id, stored_path FROM jobs").fetchall()
+		conn.execute("DELETE FROM jobs")
+
+	for row in rows:
+		stored_path = row["stored_path"]
+		if stored_path:
+			try:
+				path_obj = Path(stored_path)
+				if path_obj.exists():
+					path_obj.unlink()
+			except Exception:
+				pass
+
+	return len(rows)
+
+
 def run_worker(stop_event: threading.Event) -> None:
 	while not stop_event.is_set():
 		job = claim_next_job()
@@ -641,6 +687,18 @@ def api_retry_job(job_id: str):
 @app.route("/api/jobs/failed/clear", methods=["POST"])
 def api_clear_failed_jobs():
 	deleted_count = clear_failed_jobs()
+	return jsonify({"ok": True, "deleted": deleted_count})
+
+
+@app.route("/api/jobs/waiting/clear", methods=["POST"])
+def api_clear_waiting_jobs():
+	deleted_count = clear_jobs_by_status(("waiting", "processing"))
+	return jsonify({"ok": True, "deleted": deleted_count})
+
+
+@app.route("/api/jobs/clear", methods=["POST"])
+def api_clear_all_jobs():
+	deleted_count = clear_all_jobs()
 	return jsonify({"ok": True, "deleted": deleted_count})
 
 
