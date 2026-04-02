@@ -150,6 +150,22 @@ def build_auth_headers() -> dict:
 	return headers
 
 
+def build_header_options() -> list[dict]:
+	auth_headers = build_auth_headers()
+	options = [auth_headers] if auth_headers else []
+	options.append({})
+
+	unique_options = []
+	seen = set()
+	for headers in options:
+		key = tuple(sorted(headers.items()))
+		if key in seen:
+			continue
+		seen.add(key)
+		unique_options.append(headers)
+	return unique_options
+
+
 def normalize_kb_items(payload) -> list:
 	if isinstance(payload, list):
 		items = payload
@@ -175,25 +191,30 @@ def normalize_kb_items(payload) -> list:
 
 
 def fetch_knowledge_bases() -> list:
-	headers = build_auth_headers()
 	session = requests.Session()
 
 	errors = []
 	for path in OPENWEBUI_KB_LIST_PATHS:
 		url = f"{OPENWEBUI_BASE_URL}{path}"
-		try:
-			response = session.get(url, headers=headers, timeout=30)
-			if response.status_code >= 400:
-				errors.append(f"GET {path} -> {response.status_code}")
-				continue
-			# Stop at the first endpoint that responds with 2xx, even if list is empty.
-			# Only fall through to the next candidate on connection errors or 4xx/5xx.
+		for headers in build_header_options():
+			auth_mode = "auth" if headers else "no-auth"
 			try:
-				return normalize_kb_items(response.json())
+				response = session.get(url, headers=headers, timeout=30)
+				if response.status_code >= 400:
+					errors.append(f"GET {path} [{auth_mode}] -> {response.status_code}")
+					continue
+
+				# Stop at the first endpoint that responds with 2xx, even if list is empty.
+				try:
+					return normalize_kb_items(response.json())
+				except Exception as exc:
+					content_type = response.headers.get("content-type", "unknown")
+					body_preview = response.text[:120].replace("\n", " ")
+					errors.append(
+						f"GET {path} [{auth_mode}] -> invalid JSON ({exc}); content-type={content_type}; body={body_preview}"
+					)
 			except Exception as exc:
-				errors.append(f"GET {path} -> invalid JSON ({exc})")
-		except Exception as exc:
-			errors.append(f"GET {path} -> {exc}")
+				errors.append(f"GET {path} [{auth_mode}] -> {exc}")
 
 	if errors:
 		raise RuntimeError(f"Unable to fetch knowledge bases. Tried: {', '.join(errors)}")
