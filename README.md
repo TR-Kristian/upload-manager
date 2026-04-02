@@ -62,6 +62,7 @@ Add this service to your existing compose file:
       - MAX_RETRY_SECONDS=60
       - OPENWEBUI_KB_LIST_PATHS=/api/v1/knowledge/,/api/v1/knowledge,/api/knowledge/,/api/knowledge
       - OPENWEBUI_UPLOAD_PATH_TEMPLATE=/api/v1/knowledge/{kb_id}/file
+      - OPENWEBUI_UPLOAD_CANDIDATES=POST|/api/v1/knowledge/{kb_id}/file,POST|/api/v1/knowledge/{kb_id}/files,POST|/api/knowledge/{kb_id}/file,POST|/api/knowledge/{kb_id}/files,PUT|/api/v1/knowledge/{kb_id}/file
     volumes:
       - upload_gateway_data:/app/data
 ```
@@ -84,6 +85,7 @@ volumes:
 - `OPENWEBUI_API_KEY_PREFIX` (default: `Bearer`)
 - `OPENWEBUI_KB_LIST_PATHS` (comma-separated list of candidate paths)
 - `OPENWEBUI_UPLOAD_PATH_TEMPLATE` (supports `{kb_id}` placeholder)
+- `OPENWEBUI_UPLOAD_CANDIDATES` (comma-separated `METHOD|PATH` list, supports `{kb_id}`)
 - `WORKER_COUNT` (default: `3`)
 - `MAX_ATTEMPTS` (default: `4`)
 - `BASE_RETRY_SECONDS` (default: `2`)

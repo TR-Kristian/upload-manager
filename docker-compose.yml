@@ -22,6 +22,7 @@ services:
       - UPLOAD_TIMEOUT_SECONDS=300
       - OPENWEBUI_KB_LIST_PATHS=/api/v1/knowledge/,/api/v1/knowledge,/api/knowledge/,/api/knowledge
       - OPENWEBUI_UPLOAD_PATH_TEMPLATE=/api/v1/knowledge/{kb_id}/file
+      - OPENWEBUI_UPLOAD_CANDIDATES=POST|/api/v1/knowledge/{kb_id}/file,POST|/api/v1/knowledge/{kb_id}/files,POST|/api/knowledge/{kb_id}/file,POST|/api/knowledge/{kb_id}/files,PUT|/api/v1/knowledge/{kb_id}/file
       - ALLOWED_EXTENSIONS=.pdf,.doc,.docx,.txt,.md,.csv,.xlsx,.ppt,.pptx
       - MAX_UPLOAD_BYTES=209715200
     volumes:

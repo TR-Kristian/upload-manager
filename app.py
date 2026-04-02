@@ -32,6 +32,14 @@ OPENWEBUI_KB_LIST_PATHS = [
 OPENWEBUI_UPLOAD_PATH_TEMPLATE = os.getenv(
 	"OPENWEBUI_UPLOAD_PATH_TEMPLATE", "/api/v1/knowledge/{kb_id}/file"
 )
+OPENWEBUI_UPLOAD_CANDIDATES = [
+	p.strip()
+	for p in os.getenv(
+		"OPENWEBUI_UPLOAD_CANDIDATES",
+		"POST|/api/v1/knowledge/{kb_id}/file,POST|/api/v1/knowledge/{kb_id}/files,POST|/api/knowledge/{kb_id}/file,POST|/api/knowledge/{kb_id}/files,PUT|/api/v1/knowledge/{kb_id}/file",
+	).split(",")
+	if p.strip()
+]
 
 WORKER_COUNT = int(os.getenv("WORKER_COUNT", "3"))
 MAX_ATTEMPTS = int(os.getenv("MAX_ATTEMPTS", "4"))
@@ -279,22 +287,73 @@ def claim_next_job():
 
 def upload_to_openwebui(job: dict) -> None:
 	kb_id = job["kb_id"]
-	upload_path = OPENWEBUI_UPLOAD_PATH_TEMPLATE.format(kb_id=kb_id)
-	url = f"{OPENWEBUI_BASE_URL}{upload_path}"
 	headers = build_auth_headers()
 
-	with open(job["stored_path"], "rb") as file_obj:
-		files = {"file": (job["filename"], file_obj)}
-		response = requests.post(
-			url,
-			headers=headers,
-			files=files,
-			timeout=UPLOAD_TIMEOUT_SECONDS,
+	targets: list[tuple[str, str]] = []
+	if OPENWEBUI_UPLOAD_PATH_TEMPLATE.strip():
+		targets.append(("POST", OPENWEBUI_UPLOAD_PATH_TEMPLATE.strip()))
+
+	for candidate in OPENWEBUI_UPLOAD_CANDIDATES:
+		if "|" in candidate:
+			method_raw, path_raw = candidate.split("|", 1)
+			method = method_raw.strip().upper() or "POST"
+			path_template = path_raw.strip()
+		else:
+			method = "POST"
+			path_template = candidate.strip()
+		if path_template:
+			targets.append((method, path_template))
+
+	# Preserve candidate order while removing duplicates.
+	seen = set()
+	unique_targets = []
+	for method, template in targets:
+		key = (method, template)
+		if key in seen:
+			continue
+		seen.add(key)
+		unique_targets.append((method, template))
+
+	attempt_summaries = []
+	last_error = None
+	for method, path_template in unique_targets:
+		upload_path = path_template.format(kb_id=kb_id)
+		url = f"{OPENWEBUI_BASE_URL}{upload_path}"
+
+		with open(job["stored_path"], "rb") as file_obj:
+			files = {"file": (job["filename"], file_obj)}
+			response = requests.request(
+				method,
+				url,
+				headers=headers,
+				files=files,
+				timeout=UPLOAD_TIMEOUT_SECONDS,
+			)
+
+		if response.status_code < 400:
+			return
+
+		body = response.text[:350].replace("\n", " ")
+		attempt_summaries.append(f"{method} {upload_path} -> {response.status_code}")
+
+		# Try the next candidate for endpoint/method mismatch scenarios.
+		if response.status_code in (404, 405):
+			last_error = RuntimeError(
+				f"Open WebUI upload path mismatch ({response.status_code}) on {method} {upload_path}"
+			)
+			continue
+
+		# Some versions may expect a different upload route; keep trying candidates.
+		last_error = RuntimeError(
+			f"Open WebUI upload failed ({response.status_code}) on {method} {upload_path}: {body}"
 		)
 
-	if response.status_code >= 400:
-		body = response.text[:1000]
-		raise RuntimeError(f"Open WebUI upload failed ({response.status_code}): {body}")
+	if last_error:
+		raise RuntimeError(
+			f"{last_error}. Tried: {', '.join(attempt_summaries)}"
+		)
+
+	raise RuntimeError("Open WebUI upload failed: no upload candidates configured")
 
 
 def run_worker(stop_event: threading.Event) -> None:
