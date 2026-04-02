@@ -63,6 +63,8 @@ Add this service to your existing compose file:
       - OPENWEBUI_KB_LIST_PATHS=/api/v1/knowledge/,/api/v1/knowledge,/api/knowledge/,/api/knowledge
       - OPENWEBUI_UPLOAD_PATH_TEMPLATE=/api/v1/knowledge/{kb_id}/file
       - OPENWEBUI_UPLOAD_CANDIDATES=POST|/api/v1/knowledge/{kb_id}/file,POST|/api/v1/knowledge/{kb_id}/files,POST|/api/knowledge/{kb_id}/file,POST|/api/knowledge/{kb_id}/files,PUT|/api/v1/knowledge/{kb_id}/file
+      - OPENWEBUI_FILE_UPLOAD_PATHS=/api/v1/files/,/api/v1/files
+      - OPENWEBUI_KB_ADD_FILE_PATH_TEMPLATES=/api/v1/knowledge/{kb_id}/file/add,/api/knowledge/{kb_id}/file/add
     volumes:
       - upload_gateway_data:/app/data
 ```
@@ -86,6 +88,8 @@ volumes:
 - `OPENWEBUI_KB_LIST_PATHS` (comma-separated list of candidate paths)
 - `OPENWEBUI_UPLOAD_PATH_TEMPLATE` (supports `{kb_id}` placeholder)
 - `OPENWEBUI_UPLOAD_CANDIDATES` (comma-separated `METHOD|PATH` list, supports `{kb_id}`)
+- `OPENWEBUI_FILE_UPLOAD_PATHS` (comma-separated upload endpoints for `/api/v1/files` variants)
+- `OPENWEBUI_KB_ADD_FILE_PATH_TEMPLATES` (comma-separated templates for `.../file/add`)
 - `WORKER_COUNT` (default: `3`)
 - `MAX_ATTEMPTS` (default: `4`)
 - `BASE_RETRY_SECONDS` (default: `2`)

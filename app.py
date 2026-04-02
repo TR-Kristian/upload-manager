@@ -40,6 +40,19 @@ OPENWEBUI_UPLOAD_CANDIDATES = [
 	).split(",")
 	if p.strip()
 ]
+OPENWEBUI_FILE_UPLOAD_PATHS = [
+	p.strip()
+	for p in os.getenv("OPENWEBUI_FILE_UPLOAD_PATHS", "/api/v1/files/,/api/v1/files").split(",")
+	if p.strip()
+]
+OPENWEBUI_KB_ADD_FILE_PATH_TEMPLATES = [
+	p.strip()
+	for p in os.getenv(
+		"OPENWEBUI_KB_ADD_FILE_PATH_TEMPLATES",
+		"/api/v1/knowledge/{kb_id}/file/add,/api/knowledge/{kb_id}/file/add",
+	).split(",")
+	if p.strip()
+]
 
 WORKER_COUNT = int(os.getenv("WORKER_COUNT", "3"))
 MAX_ATTEMPTS = int(os.getenv("MAX_ATTEMPTS", "4"))
@@ -285,9 +298,89 @@ def claim_next_job():
 	return get_job(job_id)
 
 
+def _extract_file_id(payload) -> str | None:
+	if isinstance(payload, dict):
+		for key in ("id", "file_id"):
+			value = payload.get(key)
+			if value:
+				return str(value)
+
+		for container_key in ("data", "file", "item", "result"):
+			container = payload.get(container_key)
+			if isinstance(container, dict):
+				for key in ("id", "file_id"):
+					value = container.get(key)
+					if value:
+						return str(value)
+	return None
+
+
+def upload_to_openwebui_via_file_add(job: dict, headers: dict) -> tuple[bool, str]:
+	kb_id = job["kb_id"]
+	attempt_summaries = []
+
+	for upload_path in OPENWEBUI_FILE_UPLOAD_PATHS:
+		upload_url = f"{OPENWEBUI_BASE_URL}{upload_path}"
+		with open(job["stored_path"], "rb") as file_obj:
+			files = {"file": (job["filename"], file_obj)}
+			upload_response = requests.post(
+				upload_url,
+				headers=headers,
+				files=files,
+				timeout=UPLOAD_TIMEOUT_SECONDS,
+			)
+
+		attempt_summaries.append(f"POST {upload_path} -> {upload_response.status_code}")
+		if upload_response.status_code in (404, 405):
+			continue
+		if upload_response.status_code >= 400:
+			body = upload_response.text[:350].replace("\n", " ")
+			return False, f"File upload failed ({upload_response.status_code}) on {upload_path}: {body}"
+
+		try:
+			upload_payload = upload_response.json()
+		except Exception:
+			upload_payload = {}
+
+		file_id = _extract_file_id(upload_payload)
+		if not file_id:
+			return False, (
+				f"File upload succeeded but file id was missing from response on {upload_path}"
+			)
+
+		for add_template in OPENWEBUI_KB_ADD_FILE_PATH_TEMPLATES:
+			add_path = add_template.format(kb_id=kb_id)
+			add_url = f"{OPENWEBUI_BASE_URL}{add_path}"
+			add_response = requests.post(
+				add_url,
+				headers={**headers, "Content-Type": "application/json"},
+				json={"file_id": file_id},
+				timeout=UPLOAD_TIMEOUT_SECONDS,
+			)
+
+			attempt_summaries.append(
+				f"POST {add_path} -> {add_response.status_code}"
+			)
+			if add_response.status_code < 400:
+				return True, ", ".join(attempt_summaries)
+			if add_response.status_code in (404, 405):
+				continue
+
+			body = add_response.text[:350].replace("\n", " ")
+			return False, (
+				f"Attach file to knowledge failed ({add_response.status_code}) on {add_path}: {body}"
+			)
+
+	return False, ", ".join(attempt_summaries)
+
+
 def upload_to_openwebui(job: dict) -> None:
 	kb_id = job["kb_id"]
 	headers = build_auth_headers()
+
+	ok, detail = upload_to_openwebui_via_file_add(job, headers)
+	if ok:
+		return
 
 	targets: list[tuple[str, str]] = []
 	if OPENWEBUI_UPLOAD_PATH_TEMPLATE.strip():
@@ -350,10 +443,33 @@ def upload_to_openwebui(job: dict) -> None:
 
 	if last_error:
 		raise RuntimeError(
-			f"{last_error}. Tried: {', '.join(attempt_summaries)}"
+			f"{last_error}. file/add attempts: {detail}. direct attempts: {', '.join(attempt_summaries)}"
 		)
 
 	raise RuntimeError("Open WebUI upload failed: no upload candidates configured")
+
+
+def clear_failed_jobs() -> int:
+	rows = []
+	with get_conn() as conn:
+		rows = conn.execute(
+			"SELECT id, stored_path FROM jobs WHERE status='failed'"
+		).fetchall()
+
+		conn.execute("DELETE FROM jobs WHERE status='failed'")
+
+	for row in rows:
+		stored_path = row["stored_path"]
+		if stored_path:
+			try:
+				path_obj = Path(stored_path)
+				if path_obj.exists():
+					path_obj.unlink()
+			except Exception:
+				# Cleanup failure should not block job table cleanup.
+				pass
+
+	return len(rows)
 
 
 def run_worker(stop_event: threading.Event) -> None:
@@ -515,6 +631,12 @@ def api_retry_job(job_id: str):
 			(now, job_id),
 		)
 	return jsonify({"ok": True})
+
+
+@app.route("/api/jobs/failed/clear", methods=["POST"])
+def api_clear_failed_jobs():
+	deleted_count = clear_failed_jobs()
+	return jsonify({"ok": True, "deleted": deleted_count})
 
 
 def bootstrap() -> tuple[threading.Event, list[threading.Thread]]:
