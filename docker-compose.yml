@@ -11,7 +11,7 @@ services:
       - APP_PORT=8088
       - DATA_DIR=/app/data
       - OPENWEBUI_BASE_URL=http://127.0.0.1:3000
-      - OPENWEBUI_API_KEY=sk-3596cb2654514b03a802e79fcf798b12
+      - OPENWEBUI_API_KEY=sk-cbb721f976c14410ab81b73a642882bf
       - OPENWEBUI_API_KEY_HEADER=Authorization
       - OPENWEBUI_API_KEY_PREFIX=Bearer
       - WORKER_COUNT=3
