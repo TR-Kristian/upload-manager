@@ -260,7 +260,7 @@ def recover_interrupted_jobs() -> None:
 # ═══════════════════════════════════════════════════════════════════════════
 
 def build_auth_headers() -> dict:
-	headers = {}
+	headers = {"Accept": "application/json"}
 	if OPENWEBUI_API_KEY:
 		if OPENWEBUI_API_KEY_PREFIX:
 			headers[OPENWEBUI_API_KEY_HEADER] = f"{OPENWEBUI_API_KEY_PREFIX} {OPENWEBUI_API_KEY}"
