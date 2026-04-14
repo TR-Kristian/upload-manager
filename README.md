@@ -53,6 +53,12 @@ docker compose up -d --build
 
 Open: **http://127.0.0.1:8088**
 
+Before starting, provide a valid Open WebUI API token in your shell or `.env`:
+
+```bash
+export OPENWEBUI_API_KEY="<your-openwebui-api-token>"
+```
+
 ## Docker Compose Service
 
 ```yaml
