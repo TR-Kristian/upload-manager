@@ -259,8 +259,12 @@ def recover_interrupted_jobs() -> None:
 # Open WebUI auth
 # ═══════════════════════════════════════════════════════════════════════════
 
+_BASE_HEADERS = {"Accept": "application/json"}
+
+
 def build_auth_headers() -> dict:
-	headers = {"Accept": "application/json"}
+	"""Return headers including the API key (and Accept: application/json)."""
+	headers = dict(_BASE_HEADERS)
 	if OPENWEBUI_API_KEY:
 		if OPENWEBUI_API_KEY_PREFIX:
 			headers[OPENWEBUI_API_KEY_HEADER] = f"{OPENWEBUI_API_KEY_PREFIX} {OPENWEBUI_API_KEY}"
@@ -270,16 +274,15 @@ def build_auth_headers() -> dict:
 
 
 def build_header_options() -> list[dict]:
+	"""Return a deduplicated list of header dicts to try in order.
+	Always starts with the authenticated headers; appends a no-auth
+	fallback only if no API key is configured.
+	"""
 	auth_headers = build_auth_headers()
-	options = [auth_headers] if auth_headers else []
-	options.append({})
-	unique, seen = [], set()
-	for h in options:
-		key = tuple(sorted(h.items()))
-		if key not in seen:
-			seen.add(key)
-			unique.append(h)
-	return unique
+	# If we have an API key, only try authenticated.  Otherwise try unauthenticated.
+	if OPENWEBUI_API_KEY:
+		return [auth_headers]
+	return [dict(_BASE_HEADERS)]
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -832,6 +835,40 @@ def serialize_job(row: dict) -> dict:
 # ═══════════════════════════════════════════════════════════════════════════
 # Routes
 # ═══════════════════════════════════════════════════════════════════════════
+
+@app.route("/api/debug/openwebui", methods=["GET"])
+def api_debug_openwebui():
+	"""Diagnostic: probe Open WebUI connectivity and auth.  Do not expose publicly."""
+	session = create_http_session()
+	results = []
+	probe_paths = [
+		"/api/v1/knowledge/",
+		"/api/v1/auths/",      # reveals if the server is even Open WebUI
+		"/health",             # Open WebUI liveness
+	]
+	for path in probe_paths:
+		url = f"{OPENWEBUI_BASE_URL}{path}"
+		for label, hdrs in [("auth", build_auth_headers()), ("no-auth", dict(_BASE_HEADERS))]:
+			try:
+				r = session.get(url, headers=hdrs, timeout=(5, 10))
+				ct = r.headers.get("content-type", "")
+				body_snip = r.text[:200].replace("\n", " ")
+				results.append({
+					"path": path, "mode": label,
+					"status": r.status_code, "content_type": ct,
+					"body_snip": body_snip,
+				})
+			except Exception as exc:
+				results.append({"path": path, "mode": label, "error": str(exc)})
+	return jsonify({
+		"base_url": OPENWEBUI_BASE_URL,
+		"api_key_set": bool(OPENWEBUI_API_KEY),
+		"api_key_prefix": OPENWEBUI_API_KEY_PREFIX,
+		"api_key_header": OPENWEBUI_API_KEY_HEADER,
+		"api_key_last4": OPENWEBUI_API_KEY[-4:] if OPENWEBUI_API_KEY else None,
+		"probes": results,
+	})
+
 
 @app.route("/")
 def index():
