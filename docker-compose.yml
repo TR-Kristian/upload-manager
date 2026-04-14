@@ -16,7 +16,7 @@ services:
       - OPENWEBUI_API_KEY=${OPENWEBUI_API_KEY}
       - OPENWEBUI_API_KEY_HEADER=Authorization
       - OPENWEBUI_API_KEY_PREFIX=Bearer
-      - OPENWEBUI_KB_LIST_PATHS=/api/v1/knowledge/,/api/v1/knowledge,/api/knowledge/,/api/knowledge,/api/v1/knowledge/search?page=1
+      - OPENWEBUI_KB_LIST_PATHS=/api/v1/knowledge/
       - OPENWEBUI_FILE_UPLOAD_PATHS=/api/v1/files/,/api/v1/files
       - OPENWEBUI_KB_ADD_FILE_PATH_TEMPLATES=/api/v1/knowledge/{kb_id}/file/add,/api/knowledge/{kb_id}/file/add
       - OPENWEBUI_CONTENT_UPDATE_PATHS=/api/v1/files/{file_id}/data/content/update

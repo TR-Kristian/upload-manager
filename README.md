@@ -59,6 +59,12 @@ Before starting, provide a valid Open WebUI API token in your shell or `.env`:
 export OPENWEBUI_API_KEY="<your-openwebui-api-token>"
 ```
 
+Or place it in a local `.env` file (recommended for repeatable restarts):
+
+```bash
+echo 'OPENWEBUI_API_KEY=<your-openwebui-api-token>' > .env
+```
+
 ## Docker Compose Service
 
 ```yaml
