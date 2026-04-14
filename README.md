@@ -1,110 +1,184 @@
-# Open WebUI Upload Gateway
+# Open WebUI – Smart Proxy Upload Gateway
 
-This service provides a browser-based upload point for coworkers.
+A browser-based upload gateway that extracts document content **locally** via
+[Docling](https://github.com/DS4SD/docling) with optimised per-format settings
+(Hungarian OCR, accurate table detection) before pushing it to Open WebUI.
 
-Features:
-- Upload documents to Open WebUI knowledge bases from a GUI.
-- Knowledge base list fetched live from Open WebUI.
-- Jobs queued and processed file-by-file with parallel workers.
-- Automatic retries with backoff for transient failures.
-- Buckets in UI: Waiting, Completed, Failed.
-- SQLite persistence so queue/history survive restarts.
+## How It Works
 
-## Quick Start (Docker)
-
-Build:
-
-```bash
-docker build -t openwebui-upload-gateway .
+```
+ Browser                Upload Gateway              Docling            Open WebUI
+ ──────                 ──────────────              ───────            ──────────
+ 1. Upload files ──────▶ Save to temp dir
+                         2. POST /v1/convert/file ──▶ Extract content
+                                                      (OCR, tables, …)
+                         ◀── Markdown content ───────
+                         3. POST /api/v1/files/?process=false ──────────▶ Store raw file
+                         ◀── file_id ──────────────────────────────────
+                         4. POST /api/v1/files/{id}/data/content/update ▶ Replace content
+                         5. POST /api/v1/knowledge/{kb}/file/add ───────▶ Add to KB & embed
 ```
 
-Run (host network, local-only):
+### Smart Proxy Pipeline (per file)
+
+| Step | Action | Target |
+|------|--------|--------|
+| 1 | **Extract** content via Docling (or plain-text read) | `docling:5001` |
+| 2 | **Upload** raw file to Open WebUI with `process=false` | `openwebui:3000` |
+| 3 | **Push** extracted Markdown content back to the file record | `openwebui:3000` |
+| 4 | **Add** file to knowledge base (triggers embedding) | `openwebui:3000` |
+
+If Docling is unreachable or extraction fails, the gateway automatically falls
+back to **legacy mode**: upload with `process=true` so Open WebUI uses its own
+content pipeline.
+
+## Features
+
+- **Per-format Docling profiles** – PDF (OCR + dlparse_v2), DOCX, XLSX, PPTX, HTML
+- **Force OCR toggle** – for scanned PDFs / image-based documents
+- **Hungarian + English OCR** via EasyOCR
+- **Accurate table detection** for PDF / DOCX / PPTX; fast mode for XLSX
+- **Automatic legacy fallback** when Docling is down
+- **Plain-text fast path** – `.txt`, `.md`, `.csv` are read directly (no Docling)
+- **Job queue** with SQLite persistence (survives restarts)
+- **Parallel workers** (configurable, default 3)
+- **Retry with exponential back-off**
+- **HungaroControl-branded UI** with live Docling health indicator
+
+## Quick Start (Docker Compose)
 
 ```bash
-docker run --rm \
-  --name openwebui-upload-gateway \
-  --network host \
-  -e OPENWEBUI_BASE_URL=http://127.0.0.1:3000 \
-  -e OPENWEBUI_API_KEY=YOUR_API_KEY \
-  -e OPENWEBUI_API_KEY_HEADER=Authorization \
-  -e OPENWEBUI_API_KEY_PREFIX=Bearer \
-  -e WORKER_COUNT=3 \
-  -e MAX_ATTEMPTS=4 \
-  -e OPENWEBUI_KB_LIST_PATHS=/api/v1/knowledge,/api/knowledge \
-  -e OPENWEBUI_UPLOAD_PATH_TEMPLATE=/api/v1/knowledge/{kb_id}/file \
-  -v upload-gateway-data:/app/data \
-  openwebui-upload-gateway
+docker compose up -d --build
 ```
 
-Open:
+Open: **http://127.0.0.1:8088**
 
-- http://127.0.0.1:8088
-
-## Docker Compose Service Snippet
-
-Add this service to your existing compose file:
+## Docker Compose Service
 
 ```yaml
+services:
   upload-gateway:
-    build: ./upload-manager
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: upload-gateway
     network_mode: host
     restart: always
     environment:
-      - APP_PORT=8088
       - OPENWEBUI_BASE_URL=http://127.0.0.1:3000
       - OPENWEBUI_API_KEY=${OPENWEBUI_API_KEY}
-      - OPENWEBUI_API_KEY_HEADER=Authorization
-      - OPENWEBUI_API_KEY_PREFIX=Bearer
+      - DOCLING_BASE_URL=http://127.0.0.1:5001
+      - DOCLING_OCR_LANGS=hu,en
       - WORKER_COUNT=3
-      - MAX_ATTEMPTS=4
-      - BASE_RETRY_SECONDS=2
-      - MAX_RETRY_SECONDS=60
-      - OPENWEBUI_KB_LIST_PATHS=/api/v1/knowledge/,/api/v1/knowledge,/api/knowledge/,/api/knowledge
-      - OPENWEBUI_UPLOAD_PATH_TEMPLATE=/api/v1/knowledge/{kb_id}/file
-      - OPENWEBUI_UPLOAD_CANDIDATES=POST|/api/v1/knowledge/{kb_id}/file,POST|/api/v1/knowledge/{kb_id}/files,POST|/api/knowledge/{kb_id}/file,POST|/api/knowledge/{kb_id}/files,PUT|/api/v1/knowledge/{kb_id}/file
-      - OPENWEBUI_FILE_UPLOAD_PATHS=/api/v1/files/,/api/v1/files
-      - OPENWEBUI_KB_ADD_FILE_PATH_TEMPLATES=/api/v1/knowledge/{kb_id}/file/add,/api/knowledge/{kb_id}/file/add
     volumes:
       - upload_gateway_data:/app/data
-```
 
-And add volume:
-
-```yaml
 volumes:
   upload_gateway_data:
 ```
 
 ## Environment Variables
 
-- `APP_HOST` (default: `0.0.0.0`)
-- `APP_PORT` (default: `8088`)
-- `DATA_DIR` (default: `/app/data`)
-- `OPENWEBUI_BASE_URL` (default: `http://127.0.0.1:3000`)
-- `OPENWEBUI_API_KEY` (required in secure setups)
-- `OPENWEBUI_API_KEY_HEADER` (default: `Authorization`)
-- `OPENWEBUI_API_KEY_PREFIX` (default: `Bearer`)
-- `OPENWEBUI_KB_LIST_PATHS` (comma-separated list of candidate paths)
-- `OPENWEBUI_UPLOAD_PATH_TEMPLATE` (supports `{kb_id}` placeholder)
-- `OPENWEBUI_UPLOAD_CANDIDATES` (comma-separated `METHOD|PATH` list, supports `{kb_id}`)
-- `OPENWEBUI_FILE_UPLOAD_PATHS` (comma-separated upload endpoints for `/api/v1/files` variants)
-- `OPENWEBUI_KB_ADD_FILE_PATH_TEMPLATES` (comma-separated templates for `.../file/add`)
-- `WORKER_COUNT` (default: `3`)
-- `MAX_ATTEMPTS` (default: `4`)
-- `BASE_RETRY_SECONDS` (default: `2`)
-- `MAX_RETRY_SECONDS` (default: `60`)
-- `UPLOAD_TIMEOUT_SECONDS` (default: `300`)
-- `POLL_IDLE_SECONDS` (default: `1`)
-- `ALLOWED_EXTENSIONS` (comma-separated)
-- `MAX_UPLOAD_BYTES` (default: `209715200`)
+### Application
 
-## Notes on Open WebUI Endpoint Versions
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `APP_HOST` | `0.0.0.0` | Bind address |
+| `APP_PORT` | `8088` | Bind port |
+| `DATA_DIR` | `/app/data` | Persistent data directory (SQLite DB + uploads) |
 
-Open WebUI API paths can differ by version. If KB loading or uploads fail:
-- Check your Open WebUI API docs or browser network calls.
-- Update:
-  - `OPENWEBUI_KB_LIST_PATHS`
-  - `OPENWEBUI_UPLOAD_PATH_TEMPLATE`
+### Open WebUI
 
-The app is designed so you can tune these without code changes.
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OPENWEBUI_BASE_URL` | `http://127.0.0.1:3000` | Open WebUI base URL |
+| `OPENWEBUI_API_KEY` | *(empty)* | API key for authentication |
+| `OPENWEBUI_API_KEY_HEADER` | `Authorization` | Header name |
+| `OPENWEBUI_API_KEY_PREFIX` | `Bearer` | Header value prefix |
+| `OPENWEBUI_KB_LIST_PATHS` | `/api/v1/knowledge/,...` | Comma-separated KB listing endpoints |
+| `OPENWEBUI_FILE_UPLOAD_PATHS` | `/api/v1/files/,...` | File upload endpoints |
+| `OPENWEBUI_KB_ADD_FILE_PATH_TEMPLATES` | `/api/v1/knowledge/{kb_id}/file/add,...` | KB add-file endpoints |
+| `OPENWEBUI_CONTENT_UPDATE_PATHS` | `/api/v1/files/{file_id}/data/content/update` | Content update endpoints |
+| `OPENWEBUI_UPLOAD_PATH_TEMPLATE` | `/api/v1/knowledge/{kb_id}/file` | Legacy upload endpoint |
+| `OPENWEBUI_UPLOAD_CANDIDATES` | `POST\|/api/v1/knowledge/{kb_id}/file,...` | Legacy upload candidates |
+
+### Docling (Smart Proxy)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DOCLING_BASE_URL` | `http://127.0.0.1:5001` | Docling-serve base URL |
+| `DOCLING_API_KEY` | *(empty)* | Docling API key (if secured) |
+| `DOCLING_OCR_LANGS` | `hu,en` | OCR languages (comma-separated) |
+| `DOCLING_OCR_ENGINE` | `easyocr` | OCR engine (`easyocr`, `tesseract_cli`, etc.) |
+| `DOCLING_PDF_BACKEND` | `dlparse_v2` | PDF parsing backend |
+| `DOCLING_TABLE_MODE_PDF` | `accurate` | Table detection mode for PDF |
+| `DOCLING_TABLE_MODE_DOCX` | `accurate` | Table detection mode for DOCX |
+| `DOCLING_TABLE_MODE_XLSX` | `fast` | Table detection mode for XLSX |
+| `DOCLING_TABLE_MODE_PPTX` | `accurate` | Table detection mode for PPTX |
+| `DOCLING_IMAGE_EXPORT` | `placeholder` | Image export mode |
+| `DOCLING_DOCUMENT_TIMEOUT` | `600` | Per-document timeout (seconds) |
+| `DOCLING_READ_TIMEOUT` | `600` | HTTP read timeout for sync calls |
+| `DOCLING_ASYNC_MAX_WAIT` | `900` | Max wait for async conversions |
+| `DOCLING_PREFER_ASYNC` | `false` | Use async Docling API |
+
+### Workers & Retry
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `WORKER_COUNT` | `3` | Number of parallel upload workers |
+| `MAX_ATTEMPTS` | `4` | Max retry attempts per file |
+| `BASE_RETRY_SECONDS` | `2` | Initial backoff delay |
+| `MAX_RETRY_SECONDS` | `60` | Max backoff delay |
+| `POLL_IDLE_SECONDS` | `1` | Idle polling interval |
+| `UPLOAD_TIMEOUT_SECONDS` | `300` | HTTP timeout for Open WebUI uploads |
+
+### Limits
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ALLOWED_EXTENSIONS` | `.pdf,.doc,.docx,.txt,.md,.csv,.xlsx,.ppt,.pptx,.html,.htm` | Accepted file types |
+| `MAX_UPLOAD_BYTES` | `209715200` (200 MB) | Max upload size |
+
+## Project Structure
+
+```
+upload-manager/
+├── app.py                 # Flask app – routes, job queue, worker pipeline
+├── docling_client.py      # Direct Docling API client (sync/async)
+├── docling_profiles.py    # Per-format conversion parameter profiles
+├── templates/
+│   └── index.html         # HungaroControl-branded SPA
+├── static/
+│   ├── HungaroControl_logos_noslogan.png
+│   └── HungaroControl_symbol.png
+├── Dockerfile
+├── docker-compose.yml
+├── requirements.txt
+└── README.md
+```
+
+## API Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/` | Web UI |
+| `GET` | `/healthz` | Liveness probe |
+| `GET` | `/api/health/docling` | Docling health check |
+| `GET` | `/api/knowledge-bases` | List knowledge bases |
+| `GET` | `/api/jobs` | List all jobs (grouped by status) |
+| `POST` | `/api/jobs` | Queue new upload jobs |
+| `POST` | `/api/jobs/<id>/retry` | Retry a failed job |
+| `POST` | `/api/jobs/waiting/clear` | Clear waiting jobs |
+| `POST` | `/api/jobs/failed/clear` | Clear failed jobs |
+| `POST` | `/api/jobs/clear` | Clear all jobs |
+
+## Troubleshooting
+
+- **Docling shows "offline"** – Check that `docling-serve` is running on the
+  configured `DOCLING_BASE_URL`. The gateway will still work via legacy mode.
+- **OCR quality is poor** – Try enabling Force OCR for the upload, or switch
+  `DOCLING_OCR_ENGINE` to `tesseract_cli`.
+- **Large files time out** – Increase `DOCLING_READ_TIMEOUT` / `DOCLING_ASYNC_MAX_WAIT`
+  and `UPLOAD_TIMEOUT_SECONDS`.
+- **KB not appearing** – Verify your `OPENWEBUI_API_KEY` has access to the KB.
+  Try adding more path variants to `OPENWEBUI_KB_LIST_PATHS`.

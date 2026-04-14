@@ -7,25 +7,39 @@ services:
     network_mode: host
     restart: always
     environment:
+      # ── App ──────────────────────────────────────────────
       - APP_HOST=0.0.0.0
       - APP_PORT=8088
       - DATA_DIR=/app/data
+      # ── Open WebUI ──────────────────────────────────────
       - OPENWEBUI_BASE_URL=http://127.0.0.1:3000
       - OPENWEBUI_API_KEY=sk-cbb721f976c14410ab81b73a642882bf
       - OPENWEBUI_API_KEY_HEADER=Authorization
       - OPENWEBUI_API_KEY_PREFIX=Bearer
+      - OPENWEBUI_KB_LIST_PATHS=/api/v1/knowledge/,/api/v1/knowledge,/api/knowledge/,/api/knowledge,/api/v1/knowledge/search?page=1
+      - OPENWEBUI_FILE_UPLOAD_PATHS=/api/v1/files/,/api/v1/files
+      - OPENWEBUI_KB_ADD_FILE_PATH_TEMPLATES=/api/v1/knowledge/{kb_id}/file/add,/api/knowledge/{kb_id}/file/add
+      - OPENWEBUI_CONTENT_UPDATE_PATHS=/api/v1/files/{file_id}/data/content/update
+      # ── Legacy fallback (kept for compatibility) ────────
+      - OPENWEBUI_UPLOAD_PATH_TEMPLATE=/api/v1/knowledge/{kb_id}/file
+      - OPENWEBUI_UPLOAD_CANDIDATES=POST|/api/v1/knowledge/{kb_id}/file,POST|/api/v1/knowledge/{kb_id}/files,POST|/api/knowledge/{kb_id}/file,POST|/api/knowledge/{kb_id}/files,PUT|/api/v1/knowledge/{kb_id}/file
+      # ── Docling (smart proxy) ───────────────────────────
+      - DOCLING_BASE_URL=http://127.0.0.1:5001
+      - DOCLING_OCR_LANGS=hu,en
+      - DOCLING_OCR_ENGINE=easyocr
+      - DOCLING_PDF_BACKEND=dlparse_v2
+      - DOCLING_TABLE_MODE_PDF=accurate
+      - DOCLING_READ_TIMEOUT=600
+      - DOCLING_ASYNC_MAX_WAIT=900
+      # ── Workers / retry ─────────────────────────────────
       - WORKER_COUNT=3
       - MAX_ATTEMPTS=4
       - BASE_RETRY_SECONDS=2
       - MAX_RETRY_SECONDS=60
       - POLL_IDLE_SECONDS=1
       - UPLOAD_TIMEOUT_SECONDS=300
-      - OPENWEBUI_KB_LIST_PATHS=/api/v1/knowledge/,/api/v1/knowledge,/api/knowledge/,/api/knowledge,/api/v1/knowledge/search?page=1
-      - OPENWEBUI_UPLOAD_PATH_TEMPLATE=/api/v1/knowledge/{kb_id}/file
-      - OPENWEBUI_UPLOAD_CANDIDATES=POST|/api/v1/knowledge/{kb_id}/file,POST|/api/v1/knowledge/{kb_id}/files,POST|/api/knowledge/{kb_id}/file,POST|/api/knowledge/{kb_id}/files,PUT|/api/v1/knowledge/{kb_id}/file
-      - OPENWEBUI_FILE_UPLOAD_PATHS=/api/v1/files/,/api/v1/files
-      - OPENWEBUI_KB_ADD_FILE_PATH_TEMPLATES=/api/v1/knowledge/{kb_id}/file/add,/api/knowledge/{kb_id}/file/add
-      - ALLOWED_EXTENSIONS=.pdf,.doc,.docx,.txt,.md,.csv,.xlsx,.ppt,.pptx
+      # ── Limits ──────────────────────────────────────────
+      - ALLOWED_EXTENSIONS=.pdf,.doc,.docx,.txt,.md,.csv,.xlsx,.ppt,.pptx,.html,.htm
       - MAX_UPLOAD_BYTES=209715200
     volumes:
       - upload_gateway_data:/app/data

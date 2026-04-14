@@ -3,16 +3,16 @@
 <head>
 	<meta charset="utf-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>HungaroControl – Knowledge Upload Gateway</title>
-  <link rel="icon" href="{{ url_for('static', filename='HungaroControl_symbol.png') }}" type="image/png">
+	<title>HungaroControl – Knowledge Upload Gateway</title>
+	<link rel="icon" href="{{ url_for('static', filename='HungaroControl_symbol.png') }}" type="image/png">
 	<style>
 		:root {
 			/* HungaroControl brand palette */
-			--hc-navy:    #0a2d5a;   /* dark nav / headings */
-			--hc-blue:    #2878c0;   /* logo / primary blue */
-			--hc-ltblue:  #dbeaf7;   /* light blue tints */
-			--hc-orange:  #f58220;   /* CTA / accent */
-			--hc-orange-d:#d96e12;   /* hover */
+			--hc-navy:    #0a2d5a;
+			--hc-blue:    #2878c0;
+			--hc-ltblue:  #dbeaf7;
+			--hc-orange:  #f58220;
+			--hc-orange-d:#d96e12;
 			--surface:    #ffffff;
 			--surface-alt:#f4f8fd;
 			--ink:        #0a2d5a;
@@ -38,6 +38,7 @@
 			padding: 26px 24px;
 		}
 
+		/* ── Brand bar ─────────────────────────────────────── */
 		.brand-bar {
 			display: flex;
 			justify-content: space-between;
@@ -77,6 +78,12 @@
 			color: #fff;
 		}
 
+		.brand-right {
+			display: flex;
+			align-items: center;
+			gap: 12px;
+		}
+
 		.brand-badge {
 			font-size: 1rem;
 			padding: 8px 18px;
@@ -88,6 +95,28 @@
 			white-space: nowrap;
 		}
 
+		/* ── Health indicator ──────────────────────────────── */
+		.health-dot {
+			width: 12px;
+			height: 12px;
+			border-radius: 50%;
+			display: inline-block;
+			margin-right: 6px;
+			flex-shrink: 0;
+		}
+		.health-dot.ok  { background: #2ecc40; box-shadow: 0 0 6px #2ecc40aa; }
+		.health-dot.err { background: #e74c3c; box-shadow: 0 0 6px #e74c3caa; }
+		.health-dot.unk { background: #95a5a6; }
+
+		.health-label {
+			font-size: 0.85rem;
+			color: #ffffffcc;
+			display: flex;
+			align-items: center;
+			white-space: nowrap;
+		}
+
+		/* ── Typography ────────────────────────────────────── */
 		.title {
 			margin: 0 0 6px;
 			font-family: "Rajdhani", "Public Sans", sans-serif;
@@ -104,6 +133,7 @@
 			max-width: 70ch;
 		}
 
+		/* ── Panel / form ──────────────────────────────────── */
 		.panel {
 			background: var(--surface);
 			border: 1px solid var(--hc-ltblue);
@@ -115,7 +145,7 @@
 		.upload-grid {
 			display: grid;
 			gap: 14px;
-			grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+			grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
 			align-items: end;
 		}
 
@@ -144,11 +174,36 @@
 			cursor: pointer;
 			transition: transform 120ms ease, background 120ms ease;
 		}
-
 		button:hover { background: var(--hc-orange-d); }
 		button:active { transform: translateY(1px); }
 		button:disabled { opacity: 0.6; cursor: not-allowed; }
 
+		/* ── Checkbox toggle ───────────────────────────────── */
+		.toggle-row {
+			display: flex;
+			align-items: center;
+			gap: 8px;
+			padding: 6px 0;
+		}
+		.toggle-row input[type="checkbox"] {
+			width: 18px;
+			height: 18px;
+			accent-color: var(--hc-orange);
+			cursor: pointer;
+		}
+		.toggle-row label {
+			margin: 0;
+			cursor: pointer;
+			font-weight: 600;
+			font-size: 0.95rem;
+		}
+		.toggle-hint {
+			font-size: 0.82rem;
+			color: var(--ink-soft);
+			margin-left: 26px;
+		}
+
+		/* ── Status / toolbar ──────────────────────────────── */
 		.status {
 			margin: 14px 0 0;
 			font-weight: 600;
@@ -161,7 +216,6 @@
 			flex-wrap: wrap;
 			margin-top: 12px;
 		}
-
 		.toolbar button {
 			width: auto;
 			padding: 8px 12px;
@@ -172,11 +226,9 @@
 			color: var(--hc-navy);
 			border: 1px solid var(--hc-ltblue);
 		}
+		.ghost-btn:hover { background: var(--surface-alt); }
 
-		.ghost-btn:hover {
-			background: var(--surface-alt);
-		}
-
+		/* ── Board / lanes / cards ─────────────────────────── */
 		.board {
 			display: grid;
 			gap: 14px;
@@ -213,12 +265,11 @@
 		.card {
 			background: var(--surface);
 			border: 1px solid var(--hc-ltblue);
-			border-left: 6px solid var(--hc-orange);  /* waiting = orange accent */
+			border-left: 6px solid var(--hc-orange);
 			border-radius: 10px;
 			padding: 10px;
 			animation: pop 240ms ease;
 		}
-
 		.card.completed { border-left-color: var(--ok); }
 		.card.failed    { border-left-color: var(--bad); }
 
@@ -232,6 +283,20 @@
 			color: var(--ink-soft);
 			margin-top: 4px;
 		}
+
+		.engine-badge {
+			display: inline-block;
+			font-size: 0.75rem;
+			padding: 2px 8px;
+			border-radius: 999px;
+			font-weight: 700;
+			letter-spacing: 0.02em;
+			vertical-align: middle;
+		}
+		.engine-badge.docling          { background: #d5f5e3; color: #145a32; }
+		.engine-badge.plaintext        { background: #d6eaf8; color: #1a5276; }
+		.engine-badge.legacy-openwebui { background: #fdebd0; color: #7e5109; }
+		.engine-badge.unknown          { background: #eee;    color: #555; }
 
 		.error {
 			margin-top: 6px;
@@ -252,7 +317,6 @@
 			cursor: pointer;
 			font-weight: 700;
 		}
-
 		.retry-btn:hover { background: #a93226; }
 
 		.empty {
@@ -266,15 +330,12 @@
 
 		@keyframes pop {
 			from { opacity: 0; transform: translateY(8px); }
-			to { opacity: 1; transform: translateY(0); }
+			to   { opacity: 1; transform: translateY(0); }
 		}
 
 		@media (max-width: 760px) {
 			.page { padding: 14px; }
-			.brand-bar {
-				flex-direction: column;
-				align-items: flex-start;
-			}
+			.brand-bar { flex-direction: column; align-items: flex-start; }
 			.board { grid-template-columns: 1fr; }
 			.cards { max-height: none; }
 		}
@@ -285,6 +346,7 @@
 </head>
 <body>
 	<main class="page">
+		<!-- ── Brand header ────────────────────────────────── -->
 		<header class="brand-bar">
 			<div class="brand-left">
 				<div class="brand-logo-wrap">
@@ -292,12 +354,22 @@
 				</div>
 				<div class="brand-sub">Internal Knowledge Operations</div>
 			</div>
-			<div class="brand-badge">Document Intake Gateway</div>
+			<div class="brand-right">
+				<span id="doclingHealth" class="health-label">
+					<span class="health-dot unk"></span> Docling: checking…
+				</span>
+				<div class="brand-badge">Smart Proxy Gateway</div>
+			</div>
 		</header>
 
 		<h1 class="title">Knowledge Upload Gateway</h1>
-		<p class="subtitle">Use this page as the single upload point. Pick a knowledge base, add files, and track them in Waiting, Completed, and Failed lanes.</p>
+		<p class="subtitle">
+			Upload documents to any knowledge base. Files are extracted locally via Docling with
+			optimised per-format settings (Hungarian OCR, accurate table detection) before being
+			pushed to Open WebUI.
+		</p>
 
+		<!-- ── Upload form ─────────────────────────────────── -->
 		<section class="panel">
 			<div class="upload-grid">
 				<div>
@@ -312,16 +384,27 @@
 					<button id="uploadBtn" type="button">Queue Upload</button>
 				</div>
 			</div>
+
+			<div class="toggle-row" style="margin-top:10px">
+				<input type="checkbox" id="forceOcrCheck">
+				<label for="forceOcrCheck">Force OCR</label>
+			</div>
+			<div class="toggle-hint">
+				Enable for scanned PDFs or image-based documents. Replaces any embedded text with OCR output (Hungarian + English).
+			</div>
+
 			<div id="statusText" class="status"></div>
+
 			<div class="toolbar">
-				<button id="refreshKbBtn" class="ghost-btn" type="button">Refresh Knowledge Bases</button>
+				<button id="refreshKbBtn" class="ghost-btn" type="button">Refresh KBs</button>
 				<button id="toggleRefreshBtn" class="ghost-btn" type="button">Pause Auto Refresh</button>
 				<button id="clearWaitingBtn" class="ghost-btn" type="button">Clear Waiting</button>
-				<button id="clearFailedBtn" class="ghost-btn" type="button">Clear Failed Files</button>
+				<button id="clearFailedBtn" class="ghost-btn" type="button">Clear Failed</button>
 				<button id="clearAllBtn" class="ghost-btn" type="button">Clear All</button>
 			</div>
 		</section>
 
+		<!-- ── Job board ───────────────────────────────────── -->
 		<section class="board">
 			<article class="panel lane">
 				<h2>Waiting <span id="waitingCount" class="count">0</span></h2>
@@ -339,46 +422,59 @@
 	</main>
 
 	<script>
-		const kbSelect = document.getElementById("kbSelect");
-		const fileInput = document.getElementById("fileInput");
-		const uploadBtn = document.getElementById("uploadBtn");
-		const statusText = document.getElementById("statusText");
-		const refreshKbBtn = document.getElementById("refreshKbBtn");
+		/* ── DOM refs ──────────────────────────────────────── */
+		const kbSelect         = document.getElementById("kbSelect");
+		const fileInput        = document.getElementById("fileInput");
+		const uploadBtn        = document.getElementById("uploadBtn");
+		const forceOcrCheck    = document.getElementById("forceOcrCheck");
+		const statusText       = document.getElementById("statusText");
+		const refreshKbBtn     = document.getElementById("refreshKbBtn");
 		const toggleRefreshBtn = document.getElementById("toggleRefreshBtn");
-		const clearWaitingBtn = document.getElementById("clearWaitingBtn");
-		const clearFailedBtn = document.getElementById("clearFailedBtn");
-		const clearAllBtn = document.getElementById("clearAllBtn");
+		const clearWaitingBtn  = document.getElementById("clearWaitingBtn");
+		const clearFailedBtn   = document.getElementById("clearFailedBtn");
+		const clearAllBtn      = document.getElementById("clearAllBtn");
+		const doclingHealth    = document.getElementById("doclingHealth");
 
-		const waitingCards = document.getElementById("waitingCards");
-		const completedCards = document.getElementById("completedCards");
-		const failedCards = document.getElementById("failedCards");
-		const waitingCount = document.getElementById("waitingCount");
-		const completedCount = document.getElementById("completedCount");
-		const failedCount = document.getElementById("failedCount");
+		const waitingCards     = document.getElementById("waitingCards");
+		const completedCards   = document.getElementById("completedCards");
+		const failedCards      = document.getElementById("failedCards");
+		const waitingCount     = document.getElementById("waitingCount");
+		const completedCount   = document.getElementById("completedCount");
+		const failedCount      = document.getElementById("failedCount");
 
 		let autoRefreshEnabled = true;
-		let jobsIntervalId = null;
+		let jobsIntervalId     = null;
 
+		/* ── Helpers ───────────────────────────────────────── */
 		function updateUploadButtonState() {
-			const hasKb = Boolean(kbSelect.value);
-			const hasFiles = Boolean(fileInput.files && fileInput.files.length > 0);
-			uploadBtn.disabled = !(hasKb && hasFiles);
+			uploadBtn.disabled = !(kbSelect.value && fileInput.files && fileInput.files.length > 0);
 		}
 
 		function setStatus(message, kind = "info") {
 			statusText.textContent = message;
-			if (kind === "error") statusText.style.color = "#c0392b";
-			else if (kind === "success") statusText.style.color = "#157347";
-			else statusText.style.color = "#0a2d5a";
+			statusText.style.color =
+				kind === "error"   ? "#c0392b" :
+				kind === "success" ? "#157347" : "#0a2d5a";
 		}
 
 		function formatDate(value) {
 			if (!value) return "-";
 			const d = new Date(value);
-			if (Number.isNaN(d.getTime())) return value;
-			return d.toLocaleString();
+			return Number.isNaN(d.getTime()) ? value : d.toLocaleString();
 		}
 
+		function engineBadge(engine) {
+			if (!engine) return "";
+			let cls = "unknown";
+			let label = engine;
+			if (engine === "docling")               { cls = "docling";          label = "Docling"; }
+			else if (engine === "plaintext")         { cls = "plaintext";       label = "Plain Text"; }
+			else if (engine === "plaintext-fallback") { cls = "plaintext";      label = "Plain Text ⚠"; }
+			else if (engine === "legacy-openwebui")  { cls = "legacy-openwebui"; label = "Legacy"; }
+			return `<span class="engine-badge ${cls}">${label}</span>`;
+		}
+
+		/* ── Card rendering ────────────────────────────────── */
 		function renderCards(target, items, state) {
 			target.innerHTML = "";
 			if (!items.length) {
@@ -388,21 +484,30 @@
 				target.appendChild(div);
 				return;
 			}
-
 			items.forEach((item) => {
 				const card = document.createElement("div");
 				card.className = `card ${state}`;
-
 				const label = item.status === "processing" ? "Processing" : item.status;
-				const kb = item.kb_name || item.kb_id || "-";
+				const kb    = item.kb_name || item.kb_id || "-";
+				const ocr   = item.force_ocr ? ' <span style="color:var(--hc-orange);font-weight:700">OCR</span>' : "";
 
 				card.innerHTML = `
-					<div class="filename">${item.filename}</div>
+					<div class="filename">${item.filename}${ocr}</div>
 					<div class="meta">KB: ${kb}</div>
-					<div class="meta">State: ${label}</div>
+					<div class="meta">State: ${label} ${engineBadge(item.engine)}</div>
 					<div class="meta">Attempt: ${item.attempt_count}/${item.max_attempts}</div>
 					<div class="meta">Updated: ${formatDate(item.updated_at)}</div>
 				`;
+
+				/* Show fallback reason on completed cards that fell back to legacy */
+				if (state === "completed" && item.engine === "legacy-openwebui" && item.last_error) {
+					const note = document.createElement("div");
+					note.className = "meta";
+					note.style.color = "var(--hc-orange-d)";
+					note.style.fontStyle = "italic";
+					note.textContent = item.last_error.replace(/^\[fallback\]\s*/, "⚠ Fallback: ");
+					card.appendChild(note);
+				}
 
 				if (state === "failed" && item.last_error) {
 					const err = document.createElement("div");
@@ -419,120 +524,123 @@
 						try {
 							const res = await fetch(`/api/jobs/${item.id}/retry`, { method: "POST" });
 							if (!res.ok) {
-								const data = await res.json().catch(() => ({}));
-								throw new Error(data.error || `HTTP ${res.status}`);
+								const d = await res.json().catch(() => ({}));
+								throw new Error(d.error || `HTTP ${res.status}`);
 							}
 							setStatus(`Retry queued for ${item.filename}`, "success");
 							await refreshJobs();
-						} catch (err) {
-							setStatus(`Retry failed: ${err.message}`, "error");
+						} catch (e) {
+							setStatus(`Retry failed: ${e.message}`, "error");
 						} finally {
 							retryBtn.disabled = false;
 						}
 					});
 					card.appendChild(retryBtn);
 				}
-
 				target.appendChild(card);
 			});
 		}
 
+		/* ── Docling health ────────────────────────────────── */
+		async function checkDoclingHealth() {
+			try {
+				const res = await fetch("/api/health/docling");
+				const data = await res.json();
+				const dot = doclingHealth.querySelector(".health-dot");
+				if (data.ok) {
+					dot.className = "health-dot ok";
+					doclingHealth.innerHTML = "";
+					doclingHealth.appendChild(dot);
+					doclingHealth.append(" Docling: online");
+				} else {
+					dot.className = "health-dot err";
+					doclingHealth.innerHTML = "";
+					doclingHealth.appendChild(dot);
+					doclingHealth.append(" Docling: offline");
+				}
+			} catch {
+				const dot = doclingHealth.querySelector(".health-dot") || document.createElement("span");
+				dot.className = "health-dot err";
+				doclingHealth.innerHTML = "";
+				doclingHealth.appendChild(dot);
+				doclingHealth.append(" Docling: error");
+			}
+		}
+
+		/* ── Knowledge bases ───────────────────────────────── */
 		async function refreshKnowledgeBases() {
 			refreshKbBtn.disabled = true;
-			kbSelect.innerHTML = "";
-			const placeholder = document.createElement("option");
-			placeholder.value = "";
-			placeholder.textContent = "Loading knowledge bases...";
-			kbSelect.appendChild(placeholder);
-
+			kbSelect.innerHTML = '<option value="">Loading…</option>';
 			try {
 				const res = await fetch("/api/knowledge-bases");
 				const data = await res.json();
 				if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-
 				kbSelect.innerHTML = "";
 				data.items.forEach((kb) => {
-					const option = document.createElement("option");
-					option.value = kb.id;
-					option.textContent = kb.name;
-					option.dataset.name = kb.name;
-					kbSelect.appendChild(option);
+					const o = document.createElement("option");
+					o.value = kb.id;
+					o.textContent = kb.name;
+					o.dataset.name = kb.name;
+					kbSelect.appendChild(o);
 				});
-
 				if (!data.items.length) {
-					const none = document.createElement("option");
-					none.value = "";
-					none.textContent = "No knowledge bases found";
-					kbSelect.appendChild(none);
+					kbSelect.innerHTML = '<option value="">No knowledge bases found</option>';
 				}
 				updateUploadButtonState();
 			} catch (err) {
-				kbSelect.innerHTML = "";
-				const errOpt = document.createElement("option");
-				errOpt.value = "";
-				errOpt.textContent = "Failed to load knowledge bases";
-				kbSelect.appendChild(errOpt);
+				kbSelect.innerHTML = '<option value="">Failed to load</option>';
 				updateUploadButtonState();
-				setStatus(`Knowledge base load failed: ${err.message}`, "error");
+				setStatus(`KB load failed: ${err.message}`, "error");
 			} finally {
 				refreshKbBtn.disabled = false;
 			}
 		}
 
+		/* ── Jobs ──────────────────────────────────────────── */
 		async function refreshJobs() {
 			try {
 				const res = await fetch("/api/jobs");
 				const data = await res.json();
 				if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-
-				renderCards(waitingCards, data.waiting || [], "waiting");
-				renderCards(completedCards, data.completed || [], "completed");
-				renderCards(failedCards, data.failed || [], "failed");
-
-				waitingCount.textContent = String((data.waiting || []).length);
+				renderCards(waitingCards,    data.waiting   || [], "waiting");
+				renderCards(completedCards,  data.completed || [], "completed");
+				renderCards(failedCards,     data.failed    || [], "failed");
+				waitingCount.textContent   = String((data.waiting   || []).length);
 				completedCount.textContent = String((data.completed || []).length);
-				failedCount.textContent = String((data.failed || []).length);
+				failedCount.textContent    = String((data.failed    || []).length);
 			} catch (err) {
 				setStatus(`Failed to refresh jobs: ${err.message}`, "error");
 			}
 		}
 
+		/* ── Upload ────────────────────────────────────────── */
 		uploadBtn.addEventListener("click", async () => {
-			const kbId = kbSelect.value;
-			const kbName = kbSelect.options[kbSelect.selectedIndex]?.textContent || "";
-			const files = fileInput.files;
+			const kbId    = kbSelect.value;
+			const kbName  = kbSelect.options[kbSelect.selectedIndex]?.textContent || "";
+			const files   = fileInput.files;
 
-			if (!kbId) {
-				setStatus("Please select a knowledge base.", "error");
-				return;
-			}
-			if (!files || files.length === 0) {
-				setStatus("Please select at least one file.", "error");
-				return;
-			}
+			if (!kbId)  return setStatus("Select a knowledge base.", "error");
+			if (!files || !files.length) return setStatus("Select at least one file.", "error");
 
 			const formData = new FormData();
 			formData.append("kb_id", kbId);
 			formData.append("kb_name", kbName);
-			Array.from(files).forEach((file) => formData.append("files", file));
+			if (forceOcrCheck.checked) formData.append("force_ocr", "true");
+			Array.from(files).forEach((f) => formData.append("files", f));
 
 			uploadBtn.disabled = true;
-			setStatus("Queueing files...");
+			setStatus("Queueing files…");
 			try {
-				const res = await fetch("/api/jobs", {
-					method: "POST",
-					body: formData
-				});
+				const res  = await fetch("/api/jobs", { method: "POST", body: formData });
 				const data = await res.json();
 				if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-
-				const created = (data.created_ids || []).length;
-				const rejected = (data.rejected || []).length;
+				const created  = (data.created_ids || []).length;
+				const rejected = (data.rejected    || []).length;
 				setStatus(`Queued ${created} file(s). Rejected ${rejected}.`, "success");
 				fileInput.value = "";
 				await refreshJobs();
 			} catch (err) {
-				setStatus(`Upload queue failed: ${err.message}`, "error");
+				setStatus(`Queue failed: ${err.message}`, "error");
 			} finally {
 				uploadBtn.disabled = false;
 				updateUploadButtonState();
@@ -542,83 +650,55 @@
 		kbSelect.addEventListener("change", updateUploadButtonState);
 		fileInput.addEventListener("change", updateUploadButtonState);
 
+		/* ── Toolbar ───────────────────────────────────────── */
 		refreshKbBtn.addEventListener("click", async () => {
-			setStatus("Refreshing knowledge bases...");
+			setStatus("Refreshing knowledge bases…");
 			await refreshKnowledgeBases();
 		});
 
 		toggleRefreshBtn.addEventListener("click", () => {
 			autoRefreshEnabled = !autoRefreshEnabled;
 			if (autoRefreshEnabled) {
-				if (!jobsIntervalId) jobsIntervalId = window.setInterval(refreshJobs, 2000);
+				if (!jobsIntervalId) jobsIntervalId = setInterval(refreshJobs, 2000);
 				toggleRefreshBtn.textContent = "Pause Auto Refresh";
-				setStatus("Job auto refresh resumed.", "success");
+				setStatus("Auto refresh resumed.", "success");
 			} else {
-				if (jobsIntervalId) {
-					window.clearInterval(jobsIntervalId);
-					jobsIntervalId = null;
-				}
+				if (jobsIntervalId) { clearInterval(jobsIntervalId); jobsIntervalId = null; }
 				toggleRefreshBtn.textContent = "Resume Auto Refresh";
-				setStatus("Job auto refresh paused.", "info");
+				setStatus("Auto refresh paused.", "info");
 			}
 		});
 
-		clearFailedBtn.addEventListener("click", async () => {
-			if (!window.confirm("Clear all failed files from the list?")) return;
-			clearFailedBtn.disabled = true;
+		async function clearAction(url, btn, label) {
+			if (!confirm(`Clear all ${label} files?`)) return;
+			btn.disabled = true;
 			try {
-				const res = await fetch("/api/jobs/failed/clear", { method: "POST" });
+				const res  = await fetch(url, { method: "POST" });
 				const data = await res.json().catch(() => ({}));
 				if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-				setStatus(`Cleared ${data.deleted || 0} failed file(s).`, "success");
+				setStatus(`Cleared ${data.deleted || 0} ${label} file(s).`, "success");
 				await refreshJobs();
 			} catch (err) {
-				setStatus(`Failed to clear failed files: ${err.message}`, "error");
+				setStatus(`Clear failed: ${err.message}`, "error");
 			} finally {
-				clearFailedBtn.disabled = false;
+				btn.disabled = false;
 			}
-		});
-
-		clearWaitingBtn.addEventListener("click", async () => {
-			if (!window.confirm("Clear all waiting and processing files from the list?")) return;
-			clearWaitingBtn.disabled = true;
-			try {
-				const res = await fetch("/api/jobs/waiting/clear", { method: "POST" });
-				const data = await res.json().catch(() => ({}));
-				if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-				setStatus(`Cleared ${data.deleted || 0} waiting file(s).`, "success");
-				await refreshJobs();
-			} catch (err) {
-				setStatus(`Failed to clear waiting files: ${err.message}`, "error");
-			} finally {
-				clearWaitingBtn.disabled = false;
-			}
-		});
-
-		clearAllBtn.addEventListener("click", async () => {
-			if (!window.confirm("Clear ALL files from waiting, completed, and failed lists?")) return;
-			clearAllBtn.disabled = true;
-			try {
-				const res = await fetch("/api/jobs/clear", { method: "POST" });
-				const data = await res.json().catch(() => ({}));
-				if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-				setStatus(`Cleared ${data.deleted || 0} file(s) from all lists.`, "success");
-				await refreshJobs();
-			} catch (err) {
-				setStatus(`Failed to clear all files: ${err.message}`, "error");
-			} finally {
-				clearAllBtn.disabled = false;
-			}
-		});
-
-		async function init() {
-			uploadBtn.disabled = true;
-			await refreshKnowledgeBases();
-			await refreshJobs();
-			jobsIntervalId = window.setInterval(refreshJobs, 2000);
-			updateUploadButtonState();
 		}
 
+		clearWaitingBtn.addEventListener("click", () => clearAction("/api/jobs/waiting/clear", clearWaitingBtn, "waiting"));
+		clearFailedBtn.addEventListener("click",  () => clearAction("/api/jobs/failed/clear",  clearFailedBtn,  "failed"));
+		clearAllBtn.addEventListener("click",     () => clearAction("/api/jobs/clear",         clearAllBtn,     "all"));
+
+		/* ── Init ──────────────────────────────────────────── */
+		async function init() {
+			uploadBtn.disabled = true;
+			checkDoclingHealth();
+			setInterval(checkDoclingHealth, 30000);
+			await refreshKnowledgeBases();
+			await refreshJobs();
+			jobsIntervalId = setInterval(refreshJobs, 2000);
+			updateUploadButtonState();
+		}
 		init();
 	</script>
 </body>

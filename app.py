@@ -1,3 +1,23 @@
+"""
+HungaroControl – Knowledge Upload Gateway  (Smart Proxy Edition)
+
+Pipeline:
+  1. User uploads files via the web UI.
+  2. Workers pick jobs from the SQLite queue (max WORKER_COUNT in parallel).
+  3. For each file:
+     a) Extract content ourselves:
+        - Plain text → read directly
+        - PDF / DOCX / XLSX / PPTX → call Docling directly with optimised
+          per-format parameters (bypassing Open WebUI's extraction).
+     b) Upload the raw file to Open WebUI with ``process=false``.
+     c) Push the extracted content via
+        ``POST /api/v1/files/{id}/data/content/update``.
+     d) Attach the file to the target knowledge base via
+        ``POST /api/v1/knowledge/{kb_id}/file/add``.
+"""
+
+import hashlib
+import json
 import os
 import random
 import sqlite3
@@ -14,6 +34,12 @@ from werkzeug.utils import secure_filename
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+from docling_client import check_health as docling_check_health, extract_content
+from docling_profiles import needs_docling, is_plaintext
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Configuration
+# ═══════════════════════════════════════════════════════════════════════════
 
 APP_PORT = int(os.getenv("APP_PORT", "8088"))
 APP_HOST = os.getenv("APP_HOST", "0.0.0.0")
@@ -23,7 +49,7 @@ OPENWEBUI_API_KEY = os.getenv("OPENWEBUI_API_KEY", "")
 OPENWEBUI_API_KEY_HEADER = os.getenv("OPENWEBUI_API_KEY_HEADER", "Authorization")
 OPENWEBUI_API_KEY_PREFIX = os.getenv("OPENWEBUI_API_KEY_PREFIX", "Bearer")
 
-# Keep paths configurable because Open WebUI endpoint paths can vary by version.
+# Open WebUI endpoint paths (configurable for version differences)
 OPENWEBUI_KB_LIST_PATHS = [
 	p.strip()
 	for p in os.getenv(
@@ -32,22 +58,22 @@ OPENWEBUI_KB_LIST_PATHS = [
 	).split(",")
 	if p.strip()
 ]
-OPENWEBUI_UPLOAD_PATH_TEMPLATE = os.getenv(
-	"OPENWEBUI_UPLOAD_PATH_TEMPLATE", "/api/v1/knowledge/{kb_id}/file"
-)
-OPENWEBUI_UPLOAD_CANDIDATES = [
-	p.strip()
-	for p in os.getenv(
-		"OPENWEBUI_UPLOAD_CANDIDATES",
-		"POST|/api/v1/knowledge/{kb_id}/file,POST|/api/v1/knowledge/{kb_id}/files,POST|/api/knowledge/{kb_id}/file,POST|/api/knowledge/{kb_id}/files,PUT|/api/v1/knowledge/{kb_id}/file",
-	).split(",")
-	if p.strip()
-]
+
 OPENWEBUI_FILE_UPLOAD_PATHS = [
 	p.strip()
 	for p in os.getenv("OPENWEBUI_FILE_UPLOAD_PATHS", "/api/v1/files/,/api/v1/files").split(",")
 	if p.strip()
 ]
+
+OPENWEBUI_CONTENT_UPDATE_PATHS = [
+	p.strip()
+	for p in os.getenv(
+		"OPENWEBUI_CONTENT_UPDATE_PATHS",
+		"/api/v1/files/{file_id}/data/content/update,/api/files/{file_id}/data/content/update",
+	).split(",")
+	if p.strip()
+]
+
 OPENWEBUI_KB_ADD_FILE_PATH_TEMPLATES = [
 	p.strip()
 	for p in os.getenv(
@@ -56,6 +82,17 @@ OPENWEBUI_KB_ADD_FILE_PATH_TEMPLATES = [
 	).split(",")
 	if p.strip()
 ]
+
+# Fallback: legacy direct-upload endpoints (used when smart proxy fails)
+OPENWEBUI_UPLOAD_CANDIDATES = [
+	p.strip()
+	for p in os.getenv(
+		"OPENWEBUI_UPLOAD_CANDIDATES",
+		"POST|/api/v1/knowledge/{kb_id}/file,POST|/api/v1/knowledge/{kb_id}/files,POST|/api/knowledge/{kb_id}/file,POST|/api/knowledge/{kb_id}/files,PUT|/api/v1/knowledge/{kb_id}/file",
+	).split(",")
+	if p.strip()
+]
+
 OPENWEBUI_FILE_STATUS_PATH_TEMPLATES = [
 	p.strip()
 	for p in os.getenv(
@@ -65,6 +102,7 @@ OPENWEBUI_FILE_STATUS_PATH_TEMPLATES = [
 	if p.strip()
 ]
 
+# HTTP tuning
 HTTP_CONNECT_TIMEOUT_SECONDS = float(os.getenv("HTTP_CONNECT_TIMEOUT_SECONDS", "5"))
 HTTP_READ_TIMEOUT_SECONDS = float(os.getenv("HTTP_READ_TIMEOUT_SECONDS", "30"))
 HTTP_RETRY_TOTAL = int(os.getenv("HTTP_RETRY_TOTAL", "3"))
@@ -72,6 +110,7 @@ HTTP_RETRY_BACKOFF = float(os.getenv("HTTP_RETRY_BACKOFF", "0.5"))
 HTTP_POOL_CONNECTIONS = int(os.getenv("HTTP_POOL_CONNECTIONS", "20"))
 HTTP_POOL_MAXSIZE = int(os.getenv("HTTP_POOL_MAXSIZE", "50"))
 
+# Worker tuning
 WORKER_COUNT = int(os.getenv("WORKER_COUNT", "3"))
 MAX_ATTEMPTS = int(os.getenv("MAX_ATTEMPTS", "4"))
 BASE_RETRY_SECONDS = float(os.getenv("BASE_RETRY_SECONDS", "2"))
@@ -81,25 +120,37 @@ UPLOAD_TIMEOUT_SECONDS = int(os.getenv("UPLOAD_TIMEOUT_SECONDS", "300"))
 FILE_PROCESS_WAIT_SECONDS = int(os.getenv("FILE_PROCESS_WAIT_SECONDS", "600"))
 FILE_PROCESS_POLL_SECONDS = float(os.getenv("FILE_PROCESS_POLL_SECONDS", "2"))
 
+# File constraints
 ALLOWED_EXTENSIONS = {
 	ext.strip().lower()
 	for ext in os.getenv(
 		"ALLOWED_EXTENSIONS",
-		".pdf,.doc,.docx,.txt,.md,.csv,.xlsx,.ppt,.pptx",
+		".pdf,.doc,.docx,.txt,.md,.csv,.xlsx,.ppt,.pptx,.html,.htm",
 	).split(",")
 	if ext.strip()
 }
 MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(200 * 1024 * 1024)))
 
+# Paths
 DATA_DIR = Path(os.getenv("DATA_DIR", "/app/data"))
 UPLOAD_DIR = DATA_DIR / "uploads"
 DB_PATH = DATA_DIR / "uploader.db"
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Flask app
+# ═══════════════════════════════════════════════════════════════════════════
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_BYTES
 logger = logging.getLogger(__name__)
+logging.basicConfig(
+	level=logging.INFO,
+	format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Helpers
+# ═══════════════════════════════════════════════════════════════════════════
 
 def utc_now_iso() -> str:
 	return datetime.now(timezone.utc).isoformat()
@@ -107,6 +158,15 @@ def utc_now_iso() -> str:
 
 def epoch_seconds() -> float:
 	return time.time()
+
+
+def file_hash(path: str) -> str:
+	"""SHA-256 of a file for deduplication logging."""
+	h = hashlib.sha256()
+	with open(path, "rb") as f:
+		for chunk in iter(lambda: f.read(65536), b""):
+			h.update(chunk)
+	return h.hexdigest()[:16]
 
 
 def ensure_dirs() -> None:
@@ -145,6 +205,10 @@ def create_http_session() -> requests.Session:
 	return session
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Database
+# ═══════════════════════════════════════════════════════════════════════════
+
 def init_db() -> None:
 	with get_conn() as conn:
 		conn.execute(
@@ -160,6 +224,8 @@ def init_db() -> None:
 				max_attempts INTEGER NOT NULL,
 				next_attempt_at REAL NOT NULL DEFAULT 0,
 				last_error TEXT,
+				engine TEXT,
+				force_ocr INTEGER NOT NULL DEFAULT 0,
 				created_at TEXT NOT NULL,
 				updated_at TEXT NOT NULL,
 				completed_at TEXT
@@ -170,27 +236,34 @@ def init_db() -> None:
 			"CREATE INDEX IF NOT EXISTS idx_jobs_status_next ON jobs(status, next_attempt_at)"
 		)
 
+		# Migrate: add columns if missing (safe for existing DBs).
+		existing_cols = {
+			row[1] for row in conn.execute("PRAGMA table_info(jobs)").fetchall()
+		}
+		if "engine" not in existing_cols:
+			conn.execute("ALTER TABLE jobs ADD COLUMN engine TEXT")
+		if "force_ocr" not in existing_cols:
+			conn.execute("ALTER TABLE jobs ADD COLUMN force_ocr INTEGER NOT NULL DEFAULT 0")
+
 
 def recover_interrupted_jobs() -> None:
 	now = utc_now_iso()
 	with get_conn() as conn:
 		conn.execute(
-			"""
-			UPDATE jobs
-			SET status='waiting', updated_at=?
-			WHERE status='processing'
-			""",
+			"UPDATE jobs SET status='waiting', updated_at=? WHERE status='processing'",
 			(now,),
 		)
 
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Open WebUI auth
+# ═══════════════════════════════════════════════════════════════════════════
 
 def build_auth_headers() -> dict:
 	headers = {}
 	if OPENWEBUI_API_KEY:
 		if OPENWEBUI_API_KEY_PREFIX:
-			headers[OPENWEBUI_API_KEY_HEADER] = (
-				f"{OPENWEBUI_API_KEY_PREFIX} {OPENWEBUI_API_KEY}"
-			)
+			headers[OPENWEBUI_API_KEY_HEADER] = f"{OPENWEBUI_API_KEY_PREFIX} {OPENWEBUI_API_KEY}"
 		else:
 			headers[OPENWEBUI_API_KEY_HEADER] = OPENWEBUI_API_KEY
 	return headers
@@ -200,17 +273,18 @@ def build_header_options() -> list[dict]:
 	auth_headers = build_auth_headers()
 	options = [auth_headers] if auth_headers else []
 	options.append({})
+	unique, seen = [], set()
+	for h in options:
+		key = tuple(sorted(h.items()))
+		if key not in seen:
+			seen.add(key)
+			unique.append(h)
+	return unique
 
-	unique_options = []
-	seen = set()
-	for headers in options:
-		key = tuple(sorted(headers.items()))
-		if key in seen:
-			continue
-		seen.add(key)
-		unique_options.append(headers)
-	return unique_options
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Knowledge base list
+# ═══════════════════════════════════════════════════════════════════════════
 
 def normalize_kb_items(payload) -> list:
 	if isinstance(payload, list):
@@ -239,7 +313,6 @@ def normalize_kb_items(payload) -> list:
 def fetch_knowledge_bases() -> list:
 	session = create_http_session()
 	header_options = build_header_options()
-
 	errors = []
 	for path in OPENWEBUI_KB_LIST_PATHS:
 		url = f"{OPENWEBUI_BASE_URL}{path}"
@@ -254,30 +327,35 @@ def fetch_knowledge_bases() -> list:
 				if response.status_code >= 400:
 					errors.append(f"GET {path} [{auth_mode}] -> {response.status_code}")
 					continue
-
-				# Stop at the first endpoint that responds with 2xx, even if list is empty.
 				try:
 					return normalize_kb_items(response.json())
 				except Exception as exc:
-					content_type = response.headers.get("content-type", "unknown")
-					body_preview = response.text[:120].replace("\n", " ")
-					errors.append(
-						f"GET {path} [{auth_mode}] -> invalid JSON ({exc}); content-type={content_type}; body={body_preview}"
-					)
+					ct = response.headers.get("content-type", "?")
+					body = response.text[:120].replace("\n", " ")
+					errors.append(f"GET {path} [{auth_mode}] -> bad JSON ({exc}); ct={ct}; body={body}")
 			except Exception as exc:
 				errors.append(f"GET {path} [{auth_mode}] -> {exc}")
 
 	if errors:
-		raise RuntimeError(f"Unable to fetch knowledge bases. Tried: {', '.join(errors)}")
+		raise RuntimeError(f"Unable to fetch knowledge bases. Tried: {'; '.join(errors)}")
 	raise RuntimeError("Unable to fetch knowledge bases: no valid endpoint configured")
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Job queue
+# ═══════════════════════════════════════════════════════════════════════════
+
 def allowed_file(filename: str) -> bool:
-	suffix = Path(filename).suffix.lower()
-	return suffix in ALLOWED_EXTENSIONS
+	return Path(filename).suffix.lower() in ALLOWED_EXTENSIONS
 
 
-def enqueue_job(filename: str, stored_path: str, kb_id: str, kb_name: str | None) -> str:
+def enqueue_job(
+	filename: str,
+	stored_path: str,
+	kb_id: str,
+	kb_name: str | None,
+	force_ocr: bool = False,
+) -> str:
 	job_id = str(uuid.uuid4())
 	now = utc_now_iso()
 	with get_conn() as conn:
@@ -286,10 +364,13 @@ def enqueue_job(filename: str, stored_path: str, kb_id: str, kb_name: str | None
 			INSERT INTO jobs (
 				id, filename, stored_path, kb_id, kb_name,
 				status, attempt_count, max_attempts, next_attempt_at,
-				last_error, created_at, updated_at, completed_at
-			) VALUES (?, ?, ?, ?, ?, 'waiting', 0, ?, 0, NULL, ?, ?, NULL)
+				last_error, engine, force_ocr,
+				created_at, updated_at, completed_at
+			) VALUES (?, ?, ?, ?, ?, 'waiting', 0, ?, 0, NULL, NULL, ?,
+					  ?, ?, NULL)
 			""",
-			(job_id, filename, stored_path, kb_id, kb_name, MAX_ATTEMPTS, now, now),
+			(job_id, filename, stored_path, kb_id, kb_name, MAX_ATTEMPTS,
+			 1 if force_ocr else 0, now, now),
 		)
 	return job_id
 
@@ -302,39 +383,39 @@ def get_job(job_id: str):
 
 def list_jobs() -> list:
 	with get_conn() as conn:
-		rows = conn.execute(
-			"SELECT * FROM jobs ORDER BY created_at DESC"
-		).fetchall()
+		rows = conn.execute("SELECT * FROM jobs ORDER BY created_at DESC").fetchall()
 	return [dict(r) for r in rows]
 
 
-def update_job_status(job_id: str, status: str, error: str | None = None) -> None:
+def update_job_status(
+	job_id: str,
+	status: str,
+	error: str | None = None,
+	engine: str | None = None,
+) -> None:
 	now = utc_now_iso()
 	completed_at = now if status == "completed" else None
 	with get_conn() as conn:
 		conn.execute(
 			"""
 			UPDATE jobs
-			SET status=?, last_error=?, updated_at=?, completed_at=?
+			SET status=?, last_error=?, engine=COALESCE(?, engine),
+				updated_at=?, completed_at=?
 			WHERE id=?
 			""",
-			(status, error, now, completed_at, job_id),
+			(status, error, engine, now, completed_at, job_id),
 		)
 
 
 def schedule_retry(job_id: str, attempt_count: int, message: str) -> None:
 	delay = min(MAX_RETRY_SECONDS, BASE_RETRY_SECONDS * (2 ** max(0, attempt_count - 1)))
 	jitter = random.uniform(0, 0.5)
-	next_attempt_at = epoch_seconds() + delay + jitter
+	next_at = epoch_seconds() + delay + jitter
 	now = utc_now_iso()
 	with get_conn() as conn:
 		conn.execute(
-			"""
-			UPDATE jobs
-			SET status='waiting', next_attempt_at=?, last_error=?, updated_at=?
-			WHERE id=?
-			""",
-			(next_attempt_at, message, now, job_id),
+			"UPDATE jobs SET status='waiting', next_attempt_at=?, last_error=?, updated_at=? WHERE id=?",
+			(next_at, message, now, job_id),
 		)
 
 
@@ -350,313 +431,343 @@ def claim_next_job():
 			conn.execute("BEGIN IMMEDIATE")
 			row = conn.execute(
 				"""
-				SELECT *
-				FROM jobs
+				SELECT * FROM jobs
 				WHERE status='waiting' AND next_attempt_at <= ?
-				ORDER BY created_at ASC
-				LIMIT 1
+				ORDER BY created_at ASC LIMIT 1
 				""",
 				(now_epoch,),
 			).fetchone()
 			if not row:
 				conn.commit()
 				return None
-
-			job_id = row["id"]
 			conn.execute(
-				"""
-				UPDATE jobs
-				SET status='processing', attempt_count=attempt_count+1, updated_at=?
-				WHERE id=?
-				""",
-				(now_iso, job_id),
+				"UPDATE jobs SET status='processing', attempt_count=attempt_count+1, updated_at=? WHERE id=?",
+				(now_iso, row["id"]),
 			)
 			conn.commit()
 	except sqlite3.OperationalError as exc:
 		if "locked" in str(exc).lower():
 			return None
 		raise
+	return get_job(row["id"])
 
-	return get_job(job_id)
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Open WebUI helpers
+# ═══════════════════════════════════════════════════════════════════════════
 
 def _extract_file_id(payload) -> str | None:
 	if isinstance(payload, dict):
 		for key in ("id", "file_id"):
-			value = payload.get(key)
-			if value:
-				return str(value)
-
-		for container_key in ("data", "file", "item", "result"):
-			container = payload.get(container_key)
-			if isinstance(container, dict):
+			v = payload.get(key)
+			if v:
+				return str(v)
+		for ck in ("data", "file", "item", "result"):
+			c = payload.get(ck)
+			if isinstance(c, dict):
 				for key in ("id", "file_id"):
-					value = container.get(key)
-					if value:
-						return str(value)
+					v = c.get(key)
+					if v:
+						return str(v)
 	return None
 
 
+def _upload_file_no_process(job: dict, headers: dict, session: requests.Session) -> str:
+	"""Upload file to Open WebUI with process=false.  Returns file_id."""
+	for upload_path in OPENWEBUI_FILE_UPLOAD_PATHS:
+		url = f"{OPENWEBUI_BASE_URL}{upload_path}"
+		with open(job["stored_path"], "rb") as fobj:
+			resp = session.post(
+				url,
+				headers=headers,
+				params={"process": "false"},
+				files={"file": (job["filename"], fobj)},
+				timeout=(HTTP_CONNECT_TIMEOUT_SECONDS, UPLOAD_TIMEOUT_SECONDS),
+			)
+
+		if resp.status_code in (404, 405):
+			continue
+		if resp.status_code >= 400:
+			body = resp.text[:350].replace("\n", " ")
+			raise RuntimeError(f"File upload (no-process) failed ({resp.status_code}) on {upload_path}: {body}")
+
+		try:
+			payload = resp.json()
+		except Exception:
+			payload = {}
+
+		file_id = _extract_file_id(payload)
+		if file_id:
+			return file_id
+		raise RuntimeError(f"File upload succeeded on {upload_path} but no file_id in response")
+
+	raise RuntimeError("All Open WebUI file upload paths returned 404/405")
+
+
+def _push_content(file_id: str, content: str, headers: dict, session: requests.Session) -> None:
+	"""Push extracted content back to Open WebUI via content update endpoint."""
+	errors = []
+	for template in OPENWEBUI_CONTENT_UPDATE_PATHS:
+		path = template.format(file_id=file_id)
+		url = f"{OPENWEBUI_BASE_URL}{path}"
+		resp = session.post(
+			url,
+			headers={**headers, "Content-Type": "application/json"},
+			json={"content": content},
+			timeout=(HTTP_CONNECT_TIMEOUT_SECONDS, UPLOAD_TIMEOUT_SECONDS),
+		)
+		if resp.status_code < 400:
+			logger.info("Content pushed via %s for file %s (%d chars)", path, file_id, len(content))
+			return
+		if resp.status_code in (404, 405):
+			errors.append(f"POST {path} -> {resp.status_code}")
+			continue
+		body = resp.text[:350].replace("\n", " ")
+		raise RuntimeError(f"Content update failed ({resp.status_code}) on {path}: {body}")
+
+	raise RuntimeError(f"All content update paths failed: {'; '.join(errors)}")
+
+
+def _add_file_to_kb(file_id: str, kb_id: str, headers: dict, session: requests.Session) -> None:
+	"""Attach file to knowledge base."""
+	errors = []
+	for template in OPENWEBUI_KB_ADD_FILE_PATH_TEMPLATES:
+		path = template.format(kb_id=kb_id)
+		url = f"{OPENWEBUI_BASE_URL}{path}"
+		resp = session.post(
+			url,
+			headers={**headers, "Content-Type": "application/json"},
+			json={"file_id": file_id},
+			timeout=(HTTP_CONNECT_TIMEOUT_SECONDS, UPLOAD_TIMEOUT_SECONDS),
+		)
+		if resp.status_code < 400:
+			logger.info("File %s added to KB %s via %s", file_id, kb_id, path)
+			return
+		if resp.status_code in (404, 405):
+			errors.append(f"POST {path} -> {resp.status_code}")
+			continue
+		body = resp.text[:350].replace("\n", " ")
+		raise RuntimeError(f"KB add-file failed ({resp.status_code}) on {path}: {body}")
+
+	raise RuntimeError(f"All KB add-file paths failed: {'; '.join(errors)}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Legacy fallback (upload via Open WebUI processing)
+# ═══════════════════════════════════════════════════════════════════════════
+
 def wait_for_openwebui_file_processing(file_id: str, headers: dict) -> tuple[bool, str]:
 	deadline = time.time() + FILE_PROCESS_WAIT_SECONDS
-	attempt_summaries = []
+	summaries = []
 	session = create_http_session()
 
 	while time.time() < deadline:
-		for status_template in OPENWEBUI_FILE_STATUS_PATH_TEMPLATES:
-			status_path = status_template.format(file_id=file_id)
-			status_url = f"{OPENWEBUI_BASE_URL}{status_path}"
+		for tmpl in OPENWEBUI_FILE_STATUS_PATH_TEMPLATES:
+			path = tmpl.format(file_id=file_id)
+			url = f"{OPENWEBUI_BASE_URL}{path}"
 			try:
-				response = session.get(
-					status_url,
-					headers=headers,
-					timeout=(HTTP_CONNECT_TIMEOUT_SECONDS, HTTP_READ_TIMEOUT_SECONDS),
-				)
-				if response.status_code in (404, 405):
-					attempt_summaries.append(f"GET {status_path} -> {response.status_code}")
+				resp = session.get(url, headers=headers, timeout=(HTTP_CONNECT_TIMEOUT_SECONDS, HTTP_READ_TIMEOUT_SECONDS))
+				if resp.status_code in (404, 405):
+					summaries.append(f"GET {path} -> {resp.status_code}")
 					continue
-				if response.status_code >= 400:
-					body = response.text[:200].replace("\n", " ")
-					return False, f"File processing status failed ({response.status_code}) on {status_path}: {body}"
-
-				payload = response.json()
-				status = str(payload.get("status", "")).lower()
-				if status == "completed":
-					return True, f"GET {status_path} -> completed"
-				if status == "failed":
-					error_text = payload.get("error") or payload.get("detail") or "processing failed"
-					return False, f"File processing failed on {status_path}: {error_text}"
-				attempt_summaries.append(f"GET {status_path} -> {status or 'pending'}")
+				if resp.status_code >= 400:
+					body = resp.text[:200].replace("\n", " ")
+					return False, f"Status check failed ({resp.status_code}) on {path}: {body}"
+				payload = resp.json()
+				st = str(payload.get("status", "")).lower()
+				if st == "completed":
+					return True, f"GET {path} -> completed"
+				if st == "failed":
+					err = payload.get("error") or payload.get("detail") or "processing failed"
+					return False, f"Processing failed on {path}: {err}"
+				summaries.append(f"GET {path} -> {st or 'pending'}")
 			except Exception as exc:
-				attempt_summaries.append(f"GET {status_path} -> {exc}")
-
+				summaries.append(f"GET {path} -> {exc}")
 		time.sleep(FILE_PROCESS_POLL_SECONDS)
 
-	return False, f"Timed out waiting for file processing. Tried: {', '.join(attempt_summaries[-10:])}"
+	return False, f"Timed out. Tried: {', '.join(summaries[-10:])}"
 
 
-def _humanize_processing_error(error_text: str) -> str:
-	if "127.0.0.1', port=5001" in error_text or "/v1/convert/file" in error_text:
-		return (
-			"Docling processing is unavailable in Open WebUI. "
-			"The Open WebUI container cannot reach Docling at http://127.0.0.1:5001. "
-			f"Original error: {error_text}"
-		)
-	return error_text
-
-
-def upload_to_openwebui_via_file_add(job: dict, headers: dict) -> tuple[str, str]:
-	kb_id = job["kb_id"]
-	attempt_summaries = []
-	session = create_http_session()
-
+def _legacy_upload(job: dict, headers: dict, session: requests.Session) -> None:
+	"""Fallback: upload with process=true and let Open WebUI call Docling."""
+	file_id = None
 	for upload_path in OPENWEBUI_FILE_UPLOAD_PATHS:
-		upload_url = f"{OPENWEBUI_BASE_URL}{upload_path}"
-		with open(job["stored_path"], "rb") as file_obj:
-			files = {"file": (job["filename"], file_obj)}
-			upload_response = session.post(
-				upload_url,
-				headers=headers,
-				params={"process": "true", "process_in_background": "false"},
-				files=files,
-				timeout=(HTTP_CONNECT_TIMEOUT_SECONDS, UPLOAD_TIMEOUT_SECONDS),
-			)
-
-		attempt_summaries.append(f"POST {upload_path} -> {upload_response.status_code}")
-		if upload_response.status_code in (404, 405):
-			continue
-		if upload_response.status_code >= 400:
-			body = upload_response.text[:350].replace("\n", " ")
-			return "fatal", f"File upload failed ({upload_response.status_code}) on {upload_path}: {body}"
-
-		try:
-			upload_payload = upload_response.json()
-		except Exception:
-			upload_payload = {}
-
-		file_id = _extract_file_id(upload_payload)
-		if not file_id:
-			return "fatal", (
-				f"File upload succeeded but file id was missing from response on {upload_path}"
-			)
-
-		processed_ok, processed_detail = wait_for_openwebui_file_processing(file_id, headers)
-		attempt_summaries.append(processed_detail)
-		if not processed_ok:
-			return "fatal", _humanize_processing_error(processed_detail)
-
-		for add_template in OPENWEBUI_KB_ADD_FILE_PATH_TEMPLATES:
-			add_path = add_template.format(kb_id=kb_id)
-			add_url = f"{OPENWEBUI_BASE_URL}{add_path}"
-			add_response = session.post(
-				add_url,
-				headers={**headers, "Content-Type": "application/json"},
-				json={"file_id": file_id},
-				timeout=(HTTP_CONNECT_TIMEOUT_SECONDS, UPLOAD_TIMEOUT_SECONDS),
-			)
-
-			attempt_summaries.append(
-				f"POST {add_path} -> {add_response.status_code}"
-			)
-			if add_response.status_code < 400:
-				return "success", ", ".join(attempt_summaries)
-			if add_response.status_code in (404, 405):
-				continue
-
-			body = add_response.text[:350].replace("\n", " ")
-			return "fatal", (
-				f"Attach file to knowledge failed ({add_response.status_code}) on {add_path}: {body}"
-			)
-
-	return "route-mismatch", ", ".join(attempt_summaries)
-
-
-def upload_to_openwebui(job: dict) -> None:
-	kb_id = job["kb_id"]
-	headers = build_auth_headers()
-	session = create_http_session()
-
-	file_add_result, detail = upload_to_openwebui_via_file_add(job, headers)
-	if file_add_result == "success":
-		return
-	if file_add_result == "fatal":
-		raise RuntimeError(detail)
-
-	targets: list[tuple[str, str]] = []
-	if OPENWEBUI_UPLOAD_PATH_TEMPLATE.strip():
-		targets.append(("POST", OPENWEBUI_UPLOAD_PATH_TEMPLATE.strip()))
-
-	for candidate in OPENWEBUI_UPLOAD_CANDIDATES:
-		if "|" in candidate:
-			method_raw, path_raw = candidate.split("|", 1)
-			method = method_raw.strip().upper() or "POST"
-			path_template = path_raw.strip()
-		else:
-			method = "POST"
-			path_template = candidate.strip()
-		if path_template:
-			targets.append((method, path_template))
-
-	# Preserve candidate order while removing duplicates.
-	seen = set()
-	unique_targets = []
-	for method, template in targets:
-		key = (method, template)
-		if key in seen:
-			continue
-		seen.add(key)
-		unique_targets.append((method, template))
-
-	attempt_summaries = []
-	last_error = None
-	for method, path_template in unique_targets:
-		upload_path = path_template.format(kb_id=kb_id)
 		url = f"{OPENWEBUI_BASE_URL}{upload_path}"
-
-		with open(job["stored_path"], "rb") as file_obj:
-			files = {"file": (job["filename"], file_obj)}
-			response = session.request(
-				method,
+		with open(job["stored_path"], "rb") as fobj:
+			resp = session.post(
 				url,
 				headers=headers,
-				files=files,
+				params={"process": "true", "process_in_background": "false"},
+				files={"file": (job["filename"], fobj)},
 				timeout=(HTTP_CONNECT_TIMEOUT_SECONDS, UPLOAD_TIMEOUT_SECONDS),
 			)
-
-		if response.status_code < 400:
-			return
-
-		body = response.text[:350].replace("\n", " ")
-		attempt_summaries.append(f"{method} {upload_path} -> {response.status_code}")
-
-		# Try the next candidate for endpoint/method mismatch scenarios.
-		if response.status_code in (404, 405):
-			last_error = RuntimeError(
-				f"Open WebUI upload path mismatch ({response.status_code}) on {method} {upload_path}"
-			)
+		if resp.status_code in (404, 405):
 			continue
+		if resp.status_code >= 400:
+			body = resp.text[:350].replace("\n", " ")
+			raise RuntimeError(f"Legacy upload failed ({resp.status_code}) on {upload_path}: {body}")
+		try:
+			file_id = _extract_file_id(resp.json())
+		except Exception:
+			pass
+		break
 
-		# Some versions may expect a different upload route; keep trying candidates.
-		last_error = RuntimeError(
-			f"Open WebUI upload failed ({response.status_code}) on {method} {upload_path}: {body}"
+	if not file_id:
+		# Try direct KB upload candidates
+		for candidate in OPENWEBUI_UPLOAD_CANDIDATES:
+			if "|" in candidate:
+				method, tmpl = candidate.split("|", 1)
+				method = method.strip().upper() or "POST"
+			else:
+				method, tmpl = "POST", candidate.strip()
+			path = tmpl.strip().format(kb_id=job["kb_id"])
+			url = f"{OPENWEBUI_BASE_URL}{path}"
+			with open(job["stored_path"], "rb") as fobj:
+				resp = session.request(
+					method, url, headers=headers,
+					files={"file": (job["filename"], fobj)},
+					timeout=(HTTP_CONNECT_TIMEOUT_SECONDS, UPLOAD_TIMEOUT_SECONDS),
+				)
+			if resp.status_code < 400:
+				return  # success via direct upload
+			if resp.status_code not in (404, 405):
+				body = resp.text[:350].replace("\n", " ")
+				raise RuntimeError(f"Legacy direct upload failed ({resp.status_code}) on {method} {path}: {body}")
+		raise RuntimeError("All legacy upload paths exhausted")
+
+	# Wait for Open WebUI processing
+	ok, detail = wait_for_openwebui_file_processing(file_id, headers)
+	if not ok:
+		raise RuntimeError(f"Legacy processing failed: {detail}")
+
+	# Attach to KB
+	_add_file_to_kb(file_id, job["kb_id"], headers, session)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Smart proxy upload (main path)
+# ═══════════════════════════════════════════════════════════════════════════
+
+def upload_to_openwebui(job: dict) -> str:
+	"""Process and upload a single job.  Returns the engine used."""
+	headers = build_auth_headers()
+	session = create_http_session()
+	force_ocr = bool(job.get("force_ocr", 0))
+	filename = job["filename"]
+	stored_path = job["stored_path"]
+
+	fallback_reason: str | None = None
+
+	# --- Step 1: Extract content locally ---
+	try:
+		content, engine = extract_content(stored_path, filename, force_ocr=force_ocr)
+		logger.info(
+			"Extracted %d chars from %s via %s (force_ocr=%s)",
+			len(content), filename, engine, force_ocr,
 		)
+	except Exception as extract_err:
+		fallback_reason = f"Extraction failed: {extract_err}"
+		logger.warning(
+			"Local extraction failed for %s: %s – falling back to legacy",
+			filename, extract_err,
+		)
+		content, engine = "", ""
 
-	if last_error:
+	if not content.strip():
+		if not fallback_reason:
+			fallback_reason = "Extraction returned empty content"
+		logger.warning("Falling back to legacy for %s (%s)", filename, fallback_reason)
+		try:
+			_legacy_upload(job, headers, session)
+		except Exception as legacy_err:
+			raise RuntimeError(
+				f"Smart proxy failed ({fallback_reason}), then legacy also failed: {legacy_err}"
+			)
+		# Record why we fell back so the user can see it
+		update_job_status(job["id"], "processing", error=f"[fallback] {fallback_reason}", engine="legacy-openwebui")
+		return "legacy-openwebui"
+
+	# --- Step 2: Upload raw file to Open WebUI (process=false) ---
+	file_id: str | None = None
+	try:
+		file_id = _upload_file_no_process(job, headers, session)
+		logger.info("File %s stored in Open WebUI as %s", filename, file_id)
+	except Exception as upload_err:
+		raise RuntimeError(f"Step 2 – Open WebUI file upload failed: {upload_err}")
+
+	# --- Step 3: Push extracted content ---
+	try:
+		_push_content(file_id, content, headers, session)
+	except Exception as push_err:
+		logger.warning(
+			"Content push failed for %s (file_id=%s): %s – attempting legacy re-upload",
+			filename, file_id, push_err,
+		)
+		# File exists in Open WebUI but has no content.  Try legacy as rescue.
+		try:
+			_legacy_upload(job, headers, session)
+			update_job_status(job["id"], "processing", error=f"[fallback] Content push failed: {push_err}", engine="legacy-openwebui")
+			return "legacy-openwebui"
+		except Exception as legacy_err:
+			raise RuntimeError(
+				f"Step 3 – Content push failed ({push_err}), then legacy rescue also failed: {legacy_err}"
+			)
+
+	# --- Step 4: Attach to knowledge base ---
+	try:
+		_add_file_to_kb(file_id, job["kb_id"], headers, session)
+	except Exception as kb_err:
 		raise RuntimeError(
-			f"{last_error}. file/add attempts: {detail}. direct attempts: {', '.join(attempt_summaries)}"
+			f"Step 4 – File uploaded & content pushed (file_id={file_id}) but KB attach failed: {kb_err}"
 		)
 
-	raise RuntimeError("Open WebUI upload failed: no upload candidates configured")
+	return engine
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Job cleanup
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _delete_stored_files(rows) -> None:
+	for row in rows:
+		sp = row["stored_path"]
+		if sp:
+			try:
+				p = Path(sp)
+				if p.exists():
+					p.unlink()
+			except Exception:
+				pass
 
 
 def clear_failed_jobs() -> int:
-	rows = []
 	with get_conn() as conn:
-		rows = conn.execute(
-			"SELECT id, stored_path FROM jobs WHERE status='failed'"
-		).fetchall()
-
+		rows = conn.execute("SELECT id, stored_path FROM jobs WHERE status='failed'").fetchall()
 		conn.execute("DELETE FROM jobs WHERE status='failed'")
-
-	for row in rows:
-		stored_path = row["stored_path"]
-		if stored_path:
-			try:
-				path_obj = Path(stored_path)
-				if path_obj.exists():
-					path_obj.unlink()
-			except Exception:
-				# Cleanup failure should not block job table cleanup.
-				pass
-
+	_delete_stored_files(rows)
 	return len(rows)
 
 
 def clear_jobs_by_status(statuses: tuple[str, ...]) -> int:
-	placeholders = ",".join(["?" for _ in statuses])
-	rows = []
+	ph = ",".join(["?" for _ in statuses])
 	with get_conn() as conn:
-		rows = conn.execute(
-			f"SELECT id, stored_path FROM jobs WHERE status IN ({placeholders})",
-			statuses,
-		).fetchall()
-
-		conn.execute(
-			f"DELETE FROM jobs WHERE status IN ({placeholders})",
-			statuses,
-		)
-
-	for row in rows:
-		stored_path = row["stored_path"]
-		if stored_path:
-			try:
-				path_obj = Path(stored_path)
-				if path_obj.exists():
-					path_obj.unlink()
-			except Exception:
-				pass
-
+		rows = conn.execute(f"SELECT id, stored_path FROM jobs WHERE status IN ({ph})", statuses).fetchall()
+		conn.execute(f"DELETE FROM jobs WHERE status IN ({ph})", statuses)
+	_delete_stored_files(rows)
 	return len(rows)
 
 
 def clear_all_jobs() -> int:
-	rows = []
 	with get_conn() as conn:
 		rows = conn.execute("SELECT id, stored_path FROM jobs").fetchall()
 		conn.execute("DELETE FROM jobs")
-
-	for row in rows:
-		stored_path = row["stored_path"]
-		if stored_path:
-			try:
-				path_obj = Path(stored_path)
-				if path_obj.exists():
-					path_obj.unlink()
-			except Exception:
-				pass
-
+	_delete_stored_files(rows)
 	return len(rows)
 
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Workers
+# ═══════════════════════════════════════════════════════════════════════════
 
 def run_worker(stop_event: threading.Event) -> None:
 	while not stop_event.is_set():
@@ -669,10 +780,10 @@ def run_worker(stop_event: threading.Event) -> None:
 			continue
 
 		try:
-			upload_to_openwebui(job)
-			update_job_status(job["id"], "completed", None)
+			engine = upload_to_openwebui(job)
+			update_job_status(job["id"], "completed", None, engine=engine)
 		except Exception as exc:
-			logger.exception("Upload worker error for job %s", job["id"])
+			logger.exception("Worker error for job %s (%s)", job["id"], job["filename"])
 			latest = get_job(job["id"])
 			if not latest:
 				continue
@@ -687,16 +798,18 @@ def start_workers() -> tuple[threading.Event, list[threading.Thread]]:
 	stop_event = threading.Event()
 	threads = []
 	for idx in range(WORKER_COUNT):
-		thread = threading.Thread(
-			target=run_worker,
-			args=(stop_event,),
-			name=f"upload-worker-{idx + 1}",
-			daemon=True,
+		t = threading.Thread(
+			target=run_worker, args=(stop_event,),
+			name=f"upload-worker-{idx + 1}", daemon=True,
 		)
-		thread.start()
-		threads.append(thread)
+		t.start()
+		threads.append(t)
 	return stop_event, threads
 
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Serialisation
+# ═══════════════════════════════════════════════════════════════════════════
 
 def serialize_job(row: dict) -> dict:
 	return {
@@ -708,11 +821,17 @@ def serialize_job(row: dict) -> dict:
 		"attempt_count": row["attempt_count"],
 		"max_attempts": row["max_attempts"],
 		"last_error": row.get("last_error"),
+		"engine": row.get("engine"),
+		"force_ocr": bool(row.get("force_ocr", 0)),
 		"created_at": row["created_at"],
 		"updated_at": row["updated_at"],
 		"completed_at": row.get("completed_at"),
 	}
 
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Routes
+# ═══════════════════════════════════════════════════════════════════════════
 
 @app.route("/")
 def index():
@@ -722,6 +841,13 @@ def index():
 @app.route("/healthz")
 def healthz():
 	return jsonify({"status": "ok", "time": utc_now_iso()})
+
+
+@app.route("/api/health/docling", methods=["GET"])
+def api_docling_health():
+	result = docling_check_health()
+	code = 200 if result["ok"] else 503
+	return jsonify(result), code
 
 
 @app.route("/api/knowledge-bases", methods=["GET"])
@@ -737,6 +863,7 @@ def api_knowledge_bases():
 def api_create_jobs():
 	kb_id = (request.form.get("kb_id") or "").strip()
 	kb_name = (request.form.get("kb_name") or "").strip() or None
+	force_ocr = request.form.get("force_ocr", "").lower() in ("1", "true", "yes", "on")
 	if not kb_id:
 		return jsonify({"error": "kb_id is required"}), 400
 
@@ -754,18 +881,16 @@ def api_create_jobs():
 			rejected.append({"filename": original_name, "reason": "Invalid filename"})
 			continue
 		if not allowed_file(cleaned_name):
-			rejected.append(
-				{
-					"filename": cleaned_name,
-					"reason": f"Extension not allowed (allowed: {sorted(ALLOWED_EXTENSIONS)})",
-				}
-			)
+			rejected.append({
+				"filename": cleaned_name,
+				"reason": f"Extension not allowed (allowed: {sorted(ALLOWED_EXTENSIONS)})",
+			})
 			continue
 
 		disk_name = f"{uuid.uuid4()}_{cleaned_name}"
 		disk_path = UPLOAD_DIR / disk_name
 		f.save(disk_path)
-		job_id = enqueue_job(cleaned_name, str(disk_path), kb_id, kb_name)
+		job_id = enqueue_job(cleaned_name, str(disk_path), kb_id, kb_name, force_ocr=force_ocr)
 		created_ids.append(job_id)
 
 	return jsonify({"created_ids": created_ids, "rejected": rejected}), 201
@@ -775,7 +900,7 @@ def api_create_jobs():
 def api_list_jobs():
 	rows = [serialize_job(j) for j in list_jobs()]
 
-	buckets = {"waiting": [], "completed": [], "failed": []}
+	buckets: dict[str, list] = {"waiting": [], "completed": [], "failed": []}
 	for row in rows:
 		if row["status"] in ("waiting", "processing"):
 			buckets["waiting"].append(row)
@@ -784,14 +909,12 @@ def api_list_jobs():
 		elif row["status"] == "failed":
 			buckets["failed"].append(row)
 
-	return jsonify(
-		{
-			"waiting": buckets["waiting"],
-			"completed": buckets["completed"],
-			"failed": buckets["failed"],
-			"all": rows,
-		}
-	)
+	return jsonify({
+		"waiting": buckets["waiting"],
+		"completed": buckets["completed"],
+		"failed": buckets["failed"],
+		"all": rows,
+	})
 
 
 @app.route("/api/jobs/<job_id>", methods=["GET"])
@@ -808,16 +931,12 @@ def api_retry_job(job_id: str):
 	if not row:
 		return jsonify({"error": "Job not found"}), 404
 	if row["status"] != "failed":
-		return jsonify({"error": "Only failed jobs can be retried manually"}), 400
+		return jsonify({"error": "Only failed jobs can be retried"}), 400
 
 	now = utc_now_iso()
 	with get_conn() as conn:
 		conn.execute(
-			"""
-			UPDATE jobs
-			SET status='waiting', next_attempt_at=0, last_error=NULL, updated_at=?
-			WHERE id=?
-			""",
+			"UPDATE jobs SET status='waiting', next_attempt_at=0, last_error=NULL, updated_at=? WHERE id=?",
 			(now, job_id),
 		)
 	return jsonify({"ok": True})
@@ -825,26 +944,35 @@ def api_retry_job(job_id: str):
 
 @app.route("/api/jobs/failed/clear", methods=["POST"])
 def api_clear_failed_jobs():
-	deleted_count = clear_failed_jobs()
-	return jsonify({"ok": True, "deleted": deleted_count})
+	return jsonify({"ok": True, "deleted": clear_failed_jobs()})
 
 
 @app.route("/api/jobs/waiting/clear", methods=["POST"])
 def api_clear_waiting_jobs():
-	deleted_count = clear_jobs_by_status(("waiting", "processing"))
-	return jsonify({"ok": True, "deleted": deleted_count})
+	return jsonify({"ok": True, "deleted": clear_jobs_by_status(("waiting", "processing"))})
 
 
 @app.route("/api/jobs/clear", methods=["POST"])
 def api_clear_all_jobs():
-	deleted_count = clear_all_jobs()
-	return jsonify({"ok": True, "deleted": deleted_count})
+	return jsonify({"ok": True, "deleted": clear_all_jobs()})
 
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Bootstrap
+# ═══════════════════════════════════════════════════════════════════════════
 
 def bootstrap() -> tuple[threading.Event, list[threading.Thread]]:
 	ensure_dirs()
 	init_db()
 	recover_interrupted_jobs()
+
+	# Log Docling connectivity at startup.
+	health = docling_check_health()
+	if health["ok"]:
+		logger.info("Docling health: %s", health["detail"])
+	else:
+		logger.warning("Docling health: %s  (will fall back to legacy mode)", health["detail"])
+
 	return start_workers()
 
 
