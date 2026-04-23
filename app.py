@@ -41,9 +41,12 @@ from qdrant_sparse import (
 	wait_and_ensure_sparse,
 	inject_sparse_vectors,
 	force_init_collection,
+	ensure_sparse_vector_config,
 	list_collections,
 	collection_info,
 	resolve_knowledge_collection_name,
+	SPARSE_ENABLED as QDRANT_SPARSE_ENABLED,
+	OPENWEBUI_QDRANT_KNOWLEDGE_COLLECTION,
 )
 
 QDRANT_URL = os.getenv("QDRANT_URL", "http://127.0.0.1:6333")
@@ -1166,10 +1169,47 @@ def api_clear_all_jobs():
 # Bootstrap
 # ═══════════════════════════════════════════════════════════════════════════
 
+def _preseed_qdrant_hybrid() -> None:
+	"""Pre-create the Open WebUI knowledge collection as hybrid at startup.
+
+	This must run before OpenWebUI writes its first embedding.  If OpenWebUI
+	creates the collection first (as dense-only), Qdrant refuses in-place sparse
+	addition and the collection must be deleted and recreated (data loss).
+
+	If the collection already exists without sparse vectors it is automatically
+	recreated as hybrid (existing points lost – re-upload required).
+	"""
+	if not QDRANT_SPARSE_ENABLED:
+		return
+	collection_name = OPENWEBUI_QDRANT_KNOWLEDGE_COLLECTION or "open-webui_knowledge"
+	try:
+		existing = list_collections()
+		if collection_name not in existing:
+			result = force_init_collection(collection_name)
+			if result.get("ok"):
+				logger.info("Startup: pre-created hybrid Qdrant collection '%s'", collection_name)
+			else:
+				logger.warning("Startup: could not pre-create '%s': %s", collection_name, result)
+		else:
+			result = ensure_sparse_vector_config(collection_name)
+			if result.get("already_configured"):
+				logger.info("Startup: Qdrant '%s' is already hybrid.", collection_name)
+			elif result.get("ok"):
+				logger.info("Startup: Qdrant '%s' upgraded to hybrid: %s", collection_name, result)
+			else:
+				logger.warning("Startup: Qdrant '%s' hybrid check: %s", collection_name, result)
+	except Exception as exc:
+		logger.warning("Startup: Qdrant hybrid pre-seed failed (Qdrant may not be ready yet): %s", exc)
+
+
 def bootstrap() -> tuple[threading.Event, list[threading.Thread]]:
 	ensure_dirs()
 	init_db()
 	recover_interrupted_jobs()
+
+	# Pre-create the Open WebUI knowledge collection as hybrid BEFORE OpenWebUI
+	# can create it as dense-only on the first upload.
+	_preseed_qdrant_hybrid()
 
 	# Log Docling connectivity at startup.
 	health = docling_check_health()

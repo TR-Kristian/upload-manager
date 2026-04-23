@@ -122,25 +122,41 @@ def ensure_sparse_vector_config(collection_name: str) -> dict:
         if SPARSE_VECTOR_NAME in existing_sparse:
             return {"ok": True, "already_configured": True, "collection": collection_name}
 
-        # Add sparse vector config
-        from qdrant_client.models import SparseVectorParams, SparseIndexParams
+        # Qdrant does NOT allow adding a sparse vector field to an existing
+        # dense-only collection via update_collection (returns 400 "Not existing
+        # vector name").  The only path forward is to delete the collection and
+        # recreate it with the full hybrid config.  Any existing points are lost
+        # and must be re-uploaded through OpenWebUI.
+        from qdrant_client.models import VectorParams, Distance, SparseVectorParams, SparseIndexParams
 
-        client.update_collection(
+        v = info.config.params.vectors
+        if isinstance(v, dict):
+            first = next(iter(v.values()))
+            dense_size, dense_distance = first.size, first.distance
+        else:
+            dense_size, dense_distance = v.size, v.distance
+
+        logger.warning(
+            "Collection '%s' is dense-only and cannot be upgraded in-place. "
+            "Recreating as hybrid (dense=%d dims + sparse '%s'). "
+            "Existing embeddings are lost – please re-upload files in OpenWebUI.",
+            collection_name, dense_size, SPARSE_VECTOR_NAME,
+        )
+        client.delete_collection(collection_name)
+        client.create_collection(
             collection_name=collection_name,
+            vectors_config=VectorParams(size=dense_size, distance=dense_distance),
             sparse_vectors_config={
                 SPARSE_VECTOR_NAME: SparseVectorParams(
-                    index=SparseIndexParams(
-                        on_disk=False,
-                        full_scan_threshold=5000,
-                    )
+                    index=SparseIndexParams(on_disk=False, full_scan_threshold=5000)
                 )
             },
         )
         logger.info(
-            "Sparse vector field '%s' added to collection '%s'",
-            SPARSE_VECTOR_NAME, collection_name,
+            "Collection '%s' recreated as hybrid (dense=%d + sparse '%s').",
+            collection_name, dense_size, SPARSE_VECTOR_NAME,
         )
-        return {"ok": True, "configured": True, "collection": collection_name}
+        return {"ok": True, "recreated_as_hybrid": True, "collection": collection_name}
 
     except Exception as exc:
         logger.warning("ensure_sparse_vector_config failed for %s: %s", collection_name, exc)
