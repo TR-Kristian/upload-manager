@@ -13,9 +13,11 @@ services:
       - DATA_DIR=/app/data
       # ── Open WebUI ──────────────────────────────────────
       - OPENWEBUI_BASE_URL=http://127.0.0.1:3000
-      - OPENWEBUI_API_KEY=sk-cbb721f976c14410ab81b73a642882bf
+      - OPENWEBUI_API_KEY=${OPENWEBUI_API_KEY}
+      - OPENWEBUI_API_KEY_FILE=${OPENWEBUI_API_KEY_FILE:-}
       - OPENWEBUI_API_KEY_HEADER=Authorization
       - OPENWEBUI_API_KEY_PREFIX=Bearer
+      - OPENWEBUI_TRY_NO_AUTH=false
       - OPENWEBUI_KB_LIST_PATHS=/api/v1/knowledge/
       - OPENWEBUI_FILE_UPLOAD_PATHS=/api/v1/files/,/api/v1/files
       - OPENWEBUI_KB_ADD_FILE_PATH_TEMPLATES=/api/v1/knowledge/{kb_id}/file/add,/api/knowledge/{kb_id}/file/add

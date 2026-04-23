@@ -65,6 +65,15 @@ Or place it in a local `.env` file (recommended for repeatable restarts):
 echo 'OPENWEBUI_API_KEY=<your-openwebui-api-token>' > .env
 ```
 
+### Portainer setup
+
+If you deploy this stack from Portainer, set one of these in the Stack environment:
+
+- `OPENWEBUI_API_KEY=<your-openwebui-api-token>`
+- `OPENWEBUI_API_KEY_FILE=/run/secrets/openwebui_api_key` (if you mount a Docker secret as a file)
+
+`OPENWEBUI_API_KEY` takes priority. `OPENWEBUI_API_KEY_FILE` is used when the key is not set directly.
+
 ## Docker Compose Service
 
 ```yaml

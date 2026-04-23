@@ -55,11 +55,27 @@ QDRANT_COLLECTION_PREFIX = os.getenv("QDRANT_COLLECTION_PREFIX", "")
 APP_PORT = int(os.getenv("APP_PORT", "8088"))
 APP_HOST = os.getenv("APP_HOST", "0.0.0.0")
 
+
+def env_value_or_file(name: str, default: str = "") -> str:
+	"""Read a config value from NAME or NAME_FILE (Docker secret style)."""
+	value = os.getenv(name)
+	if value:
+		return value
+
+	file_path = os.getenv(f"{name}_FILE", "").strip()
+	if file_path:
+		try:
+			return Path(file_path).read_text(encoding="utf-8").strip()
+		except Exception as exc:
+			logging.getLogger(__name__).warning("Unable to read %s from %s: %s", name, file_path, exc)
+
+	return default
+
 OPENWEBUI_BASE_URL = os.getenv("OPENWEBUI_BASE_URL", "http://127.0.0.1:3000").rstrip("/")
-OPENWEBUI_API_KEY = os.getenv("OPENWEBUI_API_KEY", "")
+OPENWEBUI_API_KEY = env_value_or_file("OPENWEBUI_API_KEY", "")
 OPENWEBUI_API_KEY_HEADER = os.getenv("OPENWEBUI_API_KEY_HEADER", "Authorization")
 OPENWEBUI_API_KEY_PREFIX = os.getenv("OPENWEBUI_API_KEY_PREFIX", "Bearer")
-OPENWEBUI_TRY_NO_AUTH = os.getenv("OPENWEBUI_TRY_NO_AUTH", "true").lower() in ("1", "true", "yes", "on")
+OPENWEBUI_TRY_NO_AUTH = os.getenv("OPENWEBUI_TRY_NO_AUTH", "false").lower() in ("1", "true", "yes", "on")
 
 # Open WebUI endpoint paths (configurable for version differences)
 OPENWEBUI_KB_LIST_PATHS = [
@@ -342,7 +358,6 @@ def resolve_openwebui_headers(session: requests.Session) -> dict:
 	probe_paths = [
 		"/api/v1/knowledge/",
 		"/api/v1/auths/",
-		"/health",
 	]
 
 	with _openwebui_headers_lock:
