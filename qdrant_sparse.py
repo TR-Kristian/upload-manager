@@ -160,8 +160,6 @@ def force_init_collection(collection_name: str, dense_vector_size: int = 4096) -
         from qdrant_client.models import (
             VectorParams, Distance,
             SparseVectorParams, SparseIndexParams,
-            ScalarQuantizationConfig, ScalarType,
-            OptimizersConfigDiff,
         )
 
         client = _client_instance()
@@ -173,16 +171,12 @@ def force_init_collection(collection_name: str, dense_vector_size: int = 4096) -
                 vectors_config=VectorParams(
                     size=dense_vector_size,
                     distance=Distance.COSINE,
-                    quantization_config=ScalarQuantizationConfig(
-                        scalar={"type": ScalarType.INT8, "always_ram": True}
-                    ),
                 ),
                 sparse_vectors_config={
                     SPARSE_VECTOR_NAME: SparseVectorParams(
                         index=SparseIndexParams(on_disk=False, full_scan_threshold=5000)
                     )
                 },
-                optimizers_config=OptimizersConfigDiff(default_segment_number=4),
             )
             return {"ok": True, "created": True, "collection": collection_name}
 
