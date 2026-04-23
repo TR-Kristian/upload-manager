@@ -285,7 +285,7 @@ def inject_sparse_vectors(
                     point_vectors.append(
                         PointVectors(
                             id=pid,
-                            vectors={
+                            vector={
                                 SPARSE_VECTOR_NAME: SparseVector(
                                     indices=sparse_emb.indices.tolist(),
                                     values=sparse_emb.values.tolist(),
