@@ -36,6 +36,17 @@ from urllib3.util.retry import Retry
 
 from docling_client import check_health as docling_check_health, extract_content
 from docling_profiles import needs_docling, is_plaintext
+from enrichment import enrich_content
+from qdrant_sparse import (
+	wait_and_ensure_sparse,
+	inject_sparse_vectors,
+	force_init_collection,
+	list_collections,
+	collection_info,
+)
+
+QDRANT_URL = os.getenv("QDRANT_URL", "http://127.0.0.1:6333")
+QDRANT_COLLECTION_PREFIX = os.getenv("QDRANT_COLLECTION_PREFIX", "")
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Configuration
@@ -690,6 +701,20 @@ def upload_to_openwebui(job: dict) -> str:
 		update_job_status(job["id"], "processing", error=f"[fallback] {fallback_reason}", engine="legacy-openwebui")
 		return "legacy-openwebui"
 
+	# --- Step 1.5: Enrich content with LLM summary + keywords ---
+	enriched_meta: dict = {}
+	try:
+		content, enriched_meta = enrich_content(content, filename)
+		if enriched_meta.get("enriched"):
+			logger.info(
+				"Enriched %s: summary=%s keywords=%d",
+				filename,
+				enriched_meta.get("summary_ok"),
+				enriched_meta.get("keyword_count", 0),
+			)
+	except Exception as enrich_err:
+		logger.warning("Enrichment failed for %s (continuing without): %s", filename, enrich_err)
+
 	# --- Step 2: Upload raw file to Open WebUI (process=false) ---
 	file_id: str | None = None
 	try:
@@ -723,6 +748,18 @@ def upload_to_openwebui(job: dict) -> str:
 		raise RuntimeError(
 			f"Step 4 – File uploaded & content pushed (file_id={file_id}) but KB attach failed: {kb_err}"
 		)
+
+	# --- Step 5: Inject sparse vectors into Qdrant (background) ---
+	kb_id = job["kb_id"]
+	def _background_sparse():
+		# Qdrant collection name == KB id in Open WebUI.
+		# On a fresh DB the collection may not exist yet when this thread starts,
+		# so we poll until Open WebUI creates it, then configure sparse vectors.
+		collection_name = f"{QDRANT_COLLECTION_PREFIX}{kb_id}"
+		wait_and_ensure_sparse(collection_name)
+		inject_sparse_vectors(collection_name, file_id)
+
+	threading.Thread(target=_background_sparse, daemon=True).start()
 
 	return engine
 
@@ -868,6 +905,37 @@ def api_debug_openwebui():
 		"api_key_last4": OPENWEBUI_API_KEY[-4:] if OPENWEBUI_API_KEY else None,
 		"probes": results,
 	})
+
+
+@app.route("/api/qdrant/init-hybrid", methods=["POST"])
+def api_qdrant_init_hybrid():
+	"""
+	Force-initialize all Qdrant collections (or a specific one) to be hybrid-ready
+	by adding the sparse vector field.  POST body (optional JSON):
+	  { "collection": "<name>" }   → init only that collection
+	  {}                           → init all collections
+	"""
+	body = request.get_json(silent=True) or {}
+	specific = body.get("collection", "").strip()
+
+	if specific:
+		names = [specific]
+	else:
+		names = list_collections()
+
+	results = []
+	for name in names:
+		res = force_init_collection(name)
+		results.append({"collection": name, **res})
+
+	return jsonify({"initialized": len(results), "results": results})
+
+
+@app.route("/api/qdrant/collections", methods=["GET"])
+def api_qdrant_collections():
+	"""List all Qdrant collections with hybrid-readiness status."""
+	names = list_collections()
+	return jsonify({"collections": [collection_info(n) for n in names]})
 
 
 @app.route("/")

@@ -1,2 +1,4 @@
 Flask==3.0.3
 requests==2.32.3
+qdrant-client[fastembed]>=1.9.0
+fastembed>=0.3.0

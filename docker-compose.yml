@@ -41,6 +41,24 @@ services:
       # ── Limits ──────────────────────────────────────────
       - ALLOWED_EXTENSIONS=.pdf,.doc,.docx,.txt,.md,.csv,.xlsx,.ppt,.pptx,.html,.htm
       - MAX_UPLOAD_BYTES=209715200
+      # ── Enrichment (LLM summary + keywords) ────────────
+      - ENRICHMENT_ENABLED=true
+      - ENRICHMENT_SUMMARY=true
+      - ENRICHMENT_KEYWORDS=true
+      - ENRICHMENT_MAX_INPUT_CHARS=12000
+      - ENRICHMENT_SUMMARY_MAX_TOKENS=350
+      - ENRICHMENT_KEYWORDS_COUNT=30
+      - VLLM_CHAT_BASE_URL=http://127.0.0.1:8001/v1
+      - VLLM_CHAT_API_KEY=Openclaw123
+      - VLLM_CHAT_MODEL=gemma-4
+      - VLLM_CHAT_TIMEOUT=120
+      # ── Qdrant sparse vectors ────────────────────────────
+      - QDRANT_URL=http://127.0.0.1:6333
+      - SPARSE_ENABLED=true
+      - SPARSE_VECTOR_NAME=text-sparse
+      - SPARSE_MODEL=Qdrant/bm25
+      - SPARSE_EMBED_GRACE_SECONDS=20
+      - QDRANT_COLLECTION_PREFIX=
     volumes:
       - upload_gateway_data:/app/data
 
