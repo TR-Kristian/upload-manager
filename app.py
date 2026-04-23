@@ -43,6 +43,7 @@ from qdrant_sparse import (
 	force_init_collection,
 	list_collections,
 	collection_info,
+	resolve_knowledge_collection_name,
 )
 
 QDRANT_URL = os.getenv("QDRANT_URL", "http://127.0.0.1:6333")
@@ -852,10 +853,9 @@ def upload_to_openwebui(job: dict) -> str:
 	# --- Step 5: Inject sparse vectors into Qdrant (background) ---
 	kb_id = job["kb_id"]
 	def _background_sparse():
-		# Qdrant collection name == KB id in Open WebUI.
-		# On a fresh DB the collection may not exist yet when this thread starts,
-		# so we poll until Open WebUI creates it, then configure sparse vectors.
-		collection_name = f"{QDRANT_COLLECTION_PREFIX}{kb_id}"
+		# Open WebUI collection layout differs by version: per-KB collection names
+		# in older setups, shared 'open-webui_knowledge' in newer ones.
+		collection_name = resolve_knowledge_collection_name(f"{QDRANT_COLLECTION_PREFIX}{kb_id}")
 		wait_and_ensure_sparse(collection_name)
 		inject_sparse_vectors(collection_name, file_id)
 

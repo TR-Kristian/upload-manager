@@ -37,6 +37,7 @@ QDRANT_API_KEY:            str   = os.getenv("QDRANT_API_KEY",             "")
 SPARSE_VECTOR_NAME:        str   = os.getenv("SPARSE_VECTOR_NAME",         "text-sparse")
 # FastEmbed model to use for BM25 sparse encoding
 SPARSE_MODEL:              str   = os.getenv("SPARSE_MODEL",               "Qdrant/bm25")
+OPENWEBUI_QDRANT_KNOWLEDGE_COLLECTION: str = os.getenv("OPENWEBUI_QDRANT_KNOWLEDGE_COLLECTION", "").strip()
 # How long to wait for Open WebUI to finish embedding before we try the sparse inject
 SPARSE_EMBED_GRACE_SECONDS:float = float(os.getenv("SPARSE_EMBED_GRACE_SECONDS", "20"))
 # Batch size for point scroll + upsert
@@ -385,15 +386,47 @@ def list_collections() -> list[str]:
         return []
 
 
+def resolve_knowledge_collection_name(kb_id: str) -> str:
+    """Resolve which Qdrant collection stores Open WebUI knowledge chunks.
+
+    Open WebUI deployments vary:
+      - older layout: one collection per KB id
+      - newer layout: shared collections like ``open-webui_knowledge``
+    """
+    names = list_collections()
+
+    if OPENWEBUI_QDRANT_KNOWLEDGE_COLLECTION:
+        if OPENWEBUI_QDRANT_KNOWLEDGE_COLLECTION in names:
+            return OPENWEBUI_QDRANT_KNOWLEDGE_COLLECTION
+        logger.warning(
+            "Configured OPENWEBUI_QDRANT_KNOWLEDGE_COLLECTION '%s' not found; falling back to auto-detect",
+            OPENWEBUI_QDRANT_KNOWLEDGE_COLLECTION,
+        )
+
+    if kb_id in names:
+        return kb_id
+
+    # Common Open WebUI shared collection names
+    for candidate in ("open-webui_knowledge", "open_webui_knowledge", "knowledge"):
+        if candidate in names:
+            return candidate
+
+    # Preserve existing behavior as final fallback.
+    return kb_id
+
+
 def collection_info(name: str) -> dict:
     try:
         info = _client_instance().get_collection(name)
         sparse = {}
         if info.config.params.sparse_vectors:
             sparse = {k: str(v) for k, v in info.config.params.sparse_vectors.items()}
+        points_count = getattr(info, "points_count", None)
+        if points_count is None:
+            points_count = getattr(info, "vectors_count", None)
         return {
             "name": name,
-            "vectors_count": info.vectors_count,
+            "points_count": points_count,
             "sparse_vectors_config": sparse,
             "has_sparse": SPARSE_VECTOR_NAME in sparse,
         }
