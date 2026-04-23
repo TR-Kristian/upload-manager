@@ -59,6 +59,7 @@ OPENWEBUI_BASE_URL = os.getenv("OPENWEBUI_BASE_URL", "http://127.0.0.1:3000").rs
 OPENWEBUI_API_KEY = os.getenv("OPENWEBUI_API_KEY", "")
 OPENWEBUI_API_KEY_HEADER = os.getenv("OPENWEBUI_API_KEY_HEADER", "Authorization")
 OPENWEBUI_API_KEY_PREFIX = os.getenv("OPENWEBUI_API_KEY_PREFIX", "Bearer")
+OPENWEBUI_TRY_NO_AUTH = os.getenv("OPENWEBUI_TRY_NO_AUTH", "true").lower() in ("1", "true", "yes", "on")
 
 # Open WebUI endpoint paths (configurable for version differences)
 OPENWEBUI_KB_LIST_PATHS = [
@@ -271,6 +272,8 @@ def recover_interrupted_jobs() -> None:
 # ═══════════════════════════════════════════════════════════════════════════
 
 _BASE_HEADERS = {"Accept": "application/json"}
+_openwebui_headers_cache: dict | None = None
+_openwebui_headers_lock = threading.Lock()
 
 
 def build_auth_headers() -> dict:
@@ -284,16 +287,94 @@ def build_auth_headers() -> dict:
 	return headers
 
 
+def _headers_signature(headers: dict) -> tuple:
+	"""Stable signature for header de-duplication."""
+	return tuple(sorted((str(k).lower(), str(v)) for k, v in headers.items()))
+
+
+def _is_auth_mode(headers: dict) -> bool:
+	"""Whether these headers include an auth credential beyond base headers."""
+	for key in headers.keys():
+		if key.lower() not in {"accept", "content-type"}:
+			return True
+	return False
+
+
 def build_header_options() -> list[dict]:
-	"""Return a deduplicated list of header dicts to try in order.
-	Always starts with the authenticated headers; appends a no-auth
-	fallback only if no API key is configured.
+	"""Return a deduplicated list of Open WebUI auth header variants.
+
+	Open WebUI deployments vary by version and proxy setup.  This helper tries
+	compatible header styles in a deterministic order and optionally includes
+	a no-auth fallback for unsecured local deployments.
 	"""
-	auth_headers = build_auth_headers()
-	# If we have an API key, only try authenticated.  Otherwise try unauthenticated.
+	options: list[dict] = []
+	seen: set[tuple] = set()
+
+	def add(headers: dict) -> None:
+		normalized = {k: v for k, v in headers.items() if v is not None and str(v) != ""}
+		sig = _headers_signature(normalized)
+		if sig not in seen:
+			seen.add(sig)
+			options.append(normalized)
+
 	if OPENWEBUI_API_KEY:
-		return [auth_headers]
-	return [dict(_BASE_HEADERS)]
+		# User-configured header/prefix always first.
+		add(build_auth_headers())
+
+		# Common Open WebUI/API gateway variants.
+		add({**_BASE_HEADERS, "Authorization": f"Bearer {OPENWEBUI_API_KEY}"})
+		add({**_BASE_HEADERS, "Authorization": OPENWEBUI_API_KEY})
+		add({**_BASE_HEADERS, "X-Api-Key": OPENWEBUI_API_KEY})
+		add({**_BASE_HEADERS, "X-API-Key": OPENWEBUI_API_KEY})
+
+	if not OPENWEBUI_API_KEY or OPENWEBUI_TRY_NO_AUTH:
+		add(dict(_BASE_HEADERS))
+
+	return options
+
+
+def resolve_openwebui_headers(session: requests.Session) -> dict:
+	"""Probe Open WebUI and cache a working auth header option."""
+	global _openwebui_headers_cache
+	if _openwebui_headers_cache is not None:
+		return dict(_openwebui_headers_cache)
+
+	probe_paths = [
+		"/api/v1/knowledge/",
+		"/api/v1/auths/",
+		"/health",
+	]
+
+	with _openwebui_headers_lock:
+		if _openwebui_headers_cache is not None:
+			return dict(_openwebui_headers_cache)
+
+		errors = []
+		for headers in build_header_options():
+			mode = "auth" if _is_auth_mode(headers) else "no-auth"
+			for path in probe_paths:
+				url = f"{OPENWEBUI_BASE_URL}{path}"
+				try:
+					resp = session.get(
+						url,
+						headers=headers,
+						timeout=(HTTP_CONNECT_TIMEOUT_SECONDS, HTTP_READ_TIMEOUT_SECONDS),
+					)
+					if resp.status_code in (401, 403):
+						errors.append(f"GET {path} [{mode}] -> {resp.status_code}")
+						continue
+					if resp.status_code < 500:
+						_openwebui_headers_cache = dict(headers)
+						return dict(headers)
+				except Exception as exc:
+					errors.append(f"GET {path} [{mode}] -> {exc}")
+
+		if errors:
+			raise RuntimeError(
+				"Unable to authenticate to Open WebUI while probing headers. Tried: "
+				+ "; ".join(errors)
+			)
+		raise RuntimeError("Unable to authenticate to Open WebUI: no header options available")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -326,12 +407,16 @@ def normalize_kb_items(payload) -> list:
 
 def fetch_knowledge_bases() -> list:
 	session = create_http_session()
-	header_options = build_header_options()
+	preferred = resolve_openwebui_headers(session)
+	header_options = [preferred]
+	for candidate in build_header_options():
+		if _headers_signature(candidate) != _headers_signature(preferred):
+			header_options.append(candidate)
 	errors = []
 	for path in OPENWEBUI_KB_LIST_PATHS:
 		url = f"{OPENWEBUI_BASE_URL}{path}"
 		for headers in header_options:
-			auth_mode = "auth" if headers else "no-auth"
+			auth_mode = "auth" if _is_auth_mode(headers) else "no-auth"
 			try:
 				response = session.get(
 					url,
@@ -664,8 +749,8 @@ def _legacy_upload(job: dict, headers: dict, session: requests.Session) -> None:
 
 def upload_to_openwebui(job: dict) -> str:
 	"""Process and upload a single job.  Returns the engine used."""
-	headers = build_auth_headers()
 	session = create_http_session()
+	headers = resolve_openwebui_headers(session)
 	force_ocr = bool(job.get("force_ocr", 0))
 	filename = job["filename"]
 	stored_path = job["stored_path"]
