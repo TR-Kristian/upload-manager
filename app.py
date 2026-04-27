@@ -40,6 +40,7 @@ from enrichment import enrich_content
 from qdrant_sparse import (
 	wait_and_ensure_sparse,
 	inject_sparse_vectors,
+	inject_sparse_vectors_all,
 	force_init_collection,
 	ensure_sparse_vector_config,
 	list_collections,
@@ -1039,6 +1040,41 @@ def api_qdrant_collections():
 	"""List all Qdrant collections with hybrid-readiness status."""
 	names = list_collections()
 	return jsonify({"collections": [collection_info(n) for n in names]})
+
+
+@app.route("/api/qdrant/re-inject-all", methods=["POST"])
+def api_qdrant_re_inject_all():
+	"""
+	Re-inject BM25 sparse vectors for every point in a collection.
+
+	Use this after changing the BM25 text formula (e.g. to include the
+	filename so extension / file-name tokens are searchable).
+
+	POST body (optional JSON):
+	  { "collection": "<name>" }  → specific collection
+	  {}                          → uses the default knowledge collection
+	"""
+	body = request.get_json(silent=True) or {}
+	collection = (body.get("collection") or "").strip()
+	if not collection:
+		from qdrant_sparse import OPENWEBUI_QDRANT_KNOWLEDGE_COLLECTION as _kc
+		collection = _kc or resolve_knowledge_collection_name("")
+
+	if not QDRANT_SPARSE_ENABLED:
+		return jsonify({"ok": False, "error": "SPARSE_ENABLED=false"}), 400
+
+	def _run():
+		logger.info("Re-inject-all started for collection '%s'", collection)
+		result = inject_sparse_vectors_all(collection)
+		logger.info("Re-inject-all finished for '%s': %s", collection, result)
+
+	t = threading.Thread(target=_run, daemon=True, name="re-inject-all")
+	t.start()
+	return jsonify({
+		"ok": True,
+		"message": f"Re-injection started in background for collection '{collection}'. Watch docker logs for progress.",
+		"collection": collection,
+	})
 
 
 @app.route("/")

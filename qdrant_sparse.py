@@ -24,8 +24,13 @@ from __future__ import annotations
 
 import logging
 import os
+import re as _re
 import time
 from typing import Optional
+
+# Strips the 32-char hex content-hash prefix that Open WebUI prepends to filenames
+# e.g. "8ced67e4704bf2f4b6ae55063f3372f0.budget_2024.xlsx" → "budget_2024.xlsx"
+_HASH_PREFIX_RE = _re.compile(r'^[0-9a-f]{32}\.')
 
 logger = logging.getLogger(__name__)
 
@@ -209,19 +214,38 @@ def force_init_collection(collection_name: str, dense_vector_size: int = 4096) -
 # ─── Sparse vector injection ──────────────────────────────────────────────────
 
 def _get_text_for_point(point) -> Optional[str]:
-    """Extract the embeddable text from a Qdrant point payload."""
+    """Extract the embeddable text from a Qdrant point payload.
+
+    Prepends the cleaned source filename (stripped of the Open WebUI content-hash
+    prefix) so that BM25 indexes the file extension and name tokens.  This lets
+    queries like "the Excel budget file" or ".xlsx" rank relevant chunks higher
+    than semantically similar chunks that happen to come from PDFs.
+    """
     payload = point.payload or {}
-    # Open WebUI stores the chunk text in various keys depending on version
+    meta = payload.get("metadata") or {}
+
+    # Extract the chunk body text
+    chunk_text: Optional[str] = None
     for key in ("page_content", "text", "content", "chunk", "data"):
         val = payload.get(key)
         if isinstance(val, str) and val.strip():
-            return val.strip()
-        # Nested inside metadata
-        meta = payload.get("metadata") or {}
+            chunk_text = val.strip()
+            break
         val = meta.get(key)
         if isinstance(val, str) and val.strip():
-            return val.strip()
-    return None
+            chunk_text = val.strip()
+            break
+
+    if not chunk_text:
+        return None
+
+    # Prepend cleaned filename so filename/extension tokens appear in BM25 index
+    raw_name = meta.get("name") or meta.get("source") or ""
+    if raw_name:
+        clean_name = _HASH_PREFIX_RE.sub("", str(raw_name))
+        return f"{clean_name}\n{chunk_text}"
+
+    return chunk_text
 
 
 def inject_sparse_vectors(
@@ -335,6 +359,96 @@ def inject_sparse_vectors(
             "Sparse vector injection failed for file %s in %s: %s",
             file_id, collection_name, exc,
         )
+        return {"ok": False, "error": str(exc)}
+
+
+def inject_sparse_vectors_all(collection_name: str) -> dict:
+    """
+    Re-inject BM25 sparse vectors for **every** point in *collection_name*.
+
+    Use this to retroactively update sparse vectors after the BM25 text
+    formula changed (e.g. filename tokens were added).  Processes in the
+    same SPARSE_BATCH_SIZE batches as the per-file injection but without
+    filtering by file_id.
+    """
+    if not SPARSE_ENABLED:
+        return {"ok": True, "skipped": "sparse disabled"}
+
+    try:
+        from qdrant_client.models import PointVectors, SparseVector
+
+        client = _client_instance()
+        encoder = _encoder_instance()
+
+        offset = None
+        total_processed = 0
+        total_skipped = 0
+        total_batches = 0
+
+        while True:
+            scroll_result, next_offset = client.scroll(
+                collection_name=collection_name,
+                limit=SPARSE_BATCH_SIZE,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
+            )
+
+            if not scroll_result:
+                break
+
+            ids: list = []
+            texts: list[str] = []
+            for point in scroll_result:
+                text = _get_text_for_point(point)
+                if text:
+                    ids.append(point.id)
+                    texts.append(text)
+                else:
+                    total_skipped += 1
+
+            if ids:
+                sparse_embeddings = list(encoder.embed(texts))
+                point_vectors = [
+                    PointVectors(
+                        id=pid,
+                        vector={
+                            SPARSE_VECTOR_NAME: SparseVector(
+                                indices=sparse_emb.indices.tolist(),
+                                values=sparse_emb.values.tolist(),
+                            )
+                        },
+                    )
+                    for pid, sparse_emb in zip(ids, sparse_embeddings)
+                ]
+                client.update_vectors(
+                    collection_name=collection_name,
+                    points=point_vectors,
+                )
+                total_processed += len(ids)
+                total_batches += 1
+                logger.info(
+                    "Sparse re-inject-all batch %d: %d points in %s",
+                    total_batches, len(ids), collection_name,
+                )
+
+            offset = next_offset
+            if offset is None:
+                break
+
+        logger.info(
+            "Sparse re-inject-all complete: %d points updated, %d skipped in %s",
+            total_processed, total_skipped, collection_name,
+        )
+        return {
+            "ok": True,
+            "points_updated": total_processed,
+            "points_skipped": total_skipped,
+            "batches": total_batches,
+        }
+
+    except Exception as exc:
+        logger.warning("inject_sparse_vectors_all failed for %s: %s", collection_name, exc)
         return {"ok": False, "error": str(exc)}
 
 
