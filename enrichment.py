@@ -117,16 +117,44 @@ def _truncate_smart(text: str, max_chars: int) -> str:
     return snip
 
 
+# Human-readable labels for file types, used to anchor summaries & keywords.
+_FILETYPE_LABELS: dict[str, str] = {
+    ".xlsx": "Microsoft Excel spreadsheet (Excel, xlsx, táblázat, spreadsheet)",
+    ".xls":  "Microsoft Excel spreadsheet (Excel, xls, táblázat, spreadsheet)",
+    ".csv":  "CSV spreadsheet (csv, táblázat, spreadsheet)",
+    ".docx": "Microsoft Word document (Word, docx, dokumentum)",
+    ".doc":  "Microsoft Word document (Word, doc, dokumentum)",
+    ".pptx": "Microsoft PowerPoint presentation (PowerPoint, pptx, prezentáció, slides)",
+    ".ppt":  "Microsoft PowerPoint presentation (PowerPoint, ppt, prezentáció, slides)",
+    ".pdf":  "PDF document (pdf, dokumentum, report)",
+}
+
+
+def _filetype_label(filename: str) -> str:
+    ext = os.path.splitext(filename)[1].lower()
+    return _FILETYPE_LABELS.get(ext, "")
+
+
 # ─── Summary ─────────────────────────────────────────────────────────────────
 
 def generate_summary(content: str, filename: str) -> str:
-    """Ask Gemma-4 for a concise 3–5 sentence document summary."""
+    """Ask the LLM for a concise 3–5 sentence document summary.
+
+    The system prompt instructs the model to start the summary by naming the
+    document type ("Excel spreadsheet", "PDF report", etc.) so that file-type
+    queries ('show me the Excel file') match via BM25 and dense embeddings.
+    """
     truncated = _truncate_smart(content, ENRICHMENT_MAX_INPUT_CHARS)
+    filetype = _filetype_label(filename)
+    filetype_instruction = (
+        f" Start the first sentence by stating the document type: '{filetype}'."
+        if filetype else ""
+    )
     system = (
         "You are a precise technical document summarizer. "
         "Write a concise factual summary in 3 to 5 sentences. "
         "Focus on the main topic, key findings, decisions, and important details. "
-        "Write in the same language as the document. "
+        f"Write in the same language as the document.{filetype_instruction} "
         "Do not add any headings, bullet points, or preamble — only plain prose."
     )
     user = f"Document filename: {filename}\n\n{truncated}"
@@ -136,14 +164,25 @@ def generate_summary(content: str, filename: str) -> str:
 # ─── Keyword extraction ───────────────────────────────────────────────────────
 
 def extract_keywords(content: str, filename: str) -> list[str]:
-    """Ask Gemma-4 to extract high-value domain keywords and named entities."""
+    """Ask the LLM to extract high-value domain keywords and named entities.
+
+    The file extension / human-readable type (e.g. 'xlsx', 'Excel', 'táblázat')
+    is injected as forced keywords so file-type queries always hit the right
+    document even if the content body contains no mention of the file format.
+    """
     truncated = _truncate_smart(content, ENRICHMENT_MAX_INPUT_CHARS)
+    filetype = _filetype_label(filename)
+    forced_kw_instruction = (
+        f" You MUST include these document-type keywords in your list: {filetype}."
+        if filetype else ""
+    )
     system = (
         f"You are a technical keyword extractor. "
         f"Extract exactly {ENRICHMENT_KEYWORDS_COUNT} high-value keywords and key phrases "
         "from the document that are most useful for information retrieval. "
         "Include: domain-specific terms, proper nouns, abbreviations, technical concepts, "
-        "named entities (people, organisations, regulations, standards, locations, dates). "
+        "named entities (people, organisations, regulations, standards, locations, dates)."
+        f"{forced_kw_instruction} "
         "Return ONLY a comma-separated list of keywords on a single line — nothing else. "
         "Preserve the original language of each term."
     )

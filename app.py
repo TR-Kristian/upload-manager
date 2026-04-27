@@ -19,6 +19,7 @@ Pipeline:
 import hashlib
 import json
 import os
+import re
 import random
 import sqlite3
 import threading
@@ -464,6 +465,41 @@ def fetch_knowledge_bases() -> list:
 # Job queue
 # ═══════════════════════════════════════════════════════════════════════════
 
+# Maps file extensions to a human-readable document-type string that gets
+# prepended to extracted content so BM25 and dense search can match queries
+# like "Excel file", "Word document", "PowerPoint presentation", etc.
+_FILETYPE_LABELS: dict[str, str] = {
+	".xlsx": "Microsoft Excel spreadsheet (Excel, xlsx, táblázat, spreadsheet)",
+	".xls":  "Microsoft Excel spreadsheet (Excel, xls, táblázat, spreadsheet)",
+	".csv":  "CSV spreadsheet (csv, táblázat, spreadsheet)",
+	".docx": "Microsoft Word document (Word, docx, dokumentum, document)",
+	".doc":  "Microsoft Word document (Word, doc, dokumentum, document)",
+	".pptx": "Microsoft PowerPoint presentation (PowerPoint, pptx, prezentáció, presentation, slides)",
+	".ppt":  "Microsoft PowerPoint presentation (PowerPoint, ppt, prezentáció, presentation, slides)",
+	".pdf":  "PDF document (pdf, dokumentum)",
+	".txt":  "plain text document (txt)",
+	".md":   "Markdown document (md, markdown)",
+	".html": "HTML document (html, webpage)",
+	".htm":  "HTML document (htm, webpage)",
+}
+
+
+def _filetype_header(filename: str) -> str:
+	"""Return a one-line document-type header to prepend to extracted content.
+
+	The header embeds human-readable synonyms so that BM25 and dense search
+	both recognise file-type queries ("show me the Excel file", "a Word
+	document called ...") even when the chunk body contains no such words.
+	"""
+	ext = Path(filename).suffix.lower()
+	label = _FILETYPE_LABELS.get(ext)
+	if not label:
+		return ""
+	# Strip the 32-char hash prefix OpenWebUI prepends to stored filenames
+	clean_name = re.sub(r'^[0-9a-f]{32}\.', '', filename)
+	return f"[Document type: {label}]\n[File name: {clean_name}]\n\n"
+
+
 def allowed_file(filename: str) -> bool:
 	return Path(filename).suffix.lower() in ALLOWED_EXTENSIONS
 
@@ -806,7 +842,13 @@ def upload_to_openwebui(job: dict) -> str:
 		update_job_status(job["id"], "processing", error=f"[fallback] {fallback_reason}", engine="legacy-openwebui")
 		return "legacy-openwebui"
 
-	# --- Step 1.5: Enrich content with LLM summary + keywords ---
+	# --- Step 1.5: Prepend filetype header so BM25 + dense search can match
+	#     human-readable file-type queries ("Excel file", "Word document", etc.).
+	#     Done BEFORE enrichment so the LLM also sees and references the file type
+	#     in its generated summary and keyword list.
+	content = _filetype_header(filename) + content
+
+	# --- Step 1.6: Enrich content with LLM summary + keywords ---
 	enriched_meta: dict = {}
 	try:
 		content, enriched_meta = enrich_content(content, filename)
