@@ -42,6 +42,7 @@ QDRANT_API_KEY:            str   = os.getenv("QDRANT_API_KEY",             "")
 SPARSE_VECTOR_NAME:        str   = os.getenv("SPARSE_VECTOR_NAME",         "text-sparse")
 # FastEmbed model to use for BM25 sparse encoding
 SPARSE_MODEL:              str   = os.getenv("SPARSE_MODEL",               "Qdrant/bm25")
+QDRANT_DENSE_VECTOR_SIZE:  int   = int(os.getenv("QDRANT_DENSE_VECTOR_SIZE", "1024"))
 OPENWEBUI_QDRANT_KNOWLEDGE_COLLECTION: str = os.getenv("OPENWEBUI_QDRANT_KNOWLEDGE_COLLECTION", "").strip()
 # How long to wait for Open WebUI to finish embedding before we try the sparse inject
 SPARSE_EMBED_GRACE_SECONDS:float = float(os.getenv("SPARSE_EMBED_GRACE_SECONDS", "20"))
@@ -168,14 +169,17 @@ def ensure_sparse_vector_config(collection_name: str) -> dict:
         return {"ok": False, "error": str(exc)}
 
 
-def force_init_collection(collection_name: str, dense_vector_size: int = 4096) -> dict:
+def force_init_collection(collection_name: str, dense_vector_size: Optional[int] = None) -> dict:
     """
     Create or reconfigure a collection to be hybrid-ready.
     Called from the /api/qdrant/init-hybrid endpoint.
-    Uses the dense vector size from Open WebUI's Qwen3-Embedding-8B (4096 dims).
+    The dense vector size must match Open WebUI's active embedding model.
     """
     if not SPARSE_ENABLED:
         return {"ok": False, "error": "SPARSE_ENABLED=false"}
+
+    if dense_vector_size is None:
+        dense_vector_size = QDRANT_DENSE_VECTOR_SIZE
 
     try:
         from qdrant_client.models import (

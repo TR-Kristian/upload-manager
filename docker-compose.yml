@@ -50,16 +50,18 @@ services:
       - ENRICHMENT_MAX_INPUT_CHARS=12000
       - ENRICHMENT_SUMMARY_MAX_TOKENS=350
       - ENRICHMENT_KEYWORDS_COUNT=30
-      - VLLM_CHAT_BASE_URL=http://127.0.0.1:8001/v1
-      - VLLM_CHAT_API_KEY=Openclaw123
-      - VLLM_CHAT_MODEL=gemma-4
-      - VLLM_CHAT_TIMEOUT=120
+      - VLLM_CHAT_BASE_URL=${VLLM_CHAT_BASE_URL:-http://127.0.0.1:8001/v1}
+      - VLLM_CHAT_API_KEY=${VLLM_CHAT_API_KEY:-Openclaw123}
+      - VLLM_CHAT_MODEL=${VLLM_CHAT_MODEL:-gemma-4}
+      - VLLM_CHAT_TIMEOUT=${VLLM_CHAT_TIMEOUT:-120}
       # ── Qdrant sparse vectors ────────────────────────────
       - QDRANT_URL=http://127.0.0.1:6333
       - SPARSE_ENABLED=true
       - SPARSE_VECTOR_NAME=text-sparse
       - SPARSE_MODEL=Qdrant/bm25
+      - QDRANT_DENSE_VECTOR_SIZE=${QDRANT_DENSE_VECTOR_SIZE:-1024}
       - SPARSE_EMBED_GRACE_SECONDS=20
+      - OPENWEBUI_QDRANT_KNOWLEDGE_COLLECTION=${OPENWEBUI_QDRANT_KNOWLEDGE_COLLECTION:-open-webui_knowledge}
       - QDRANT_COLLECTION_PREFIX=
     volumes:
       - upload_gateway_data:/app/data
