@@ -712,19 +712,15 @@ def _preseed_qdrant_hybrid_for_kb(kb_id: str) -> None:
 	if not QDRANT_SPARSE_ENABLED:
 		return
 
-	candidates: list[str] = []
-	shared_collection = OPENWEBUI_QDRANT_KNOWLEDGE_COLLECTION or "open-webui_knowledge"
-	for name in (shared_collection, f"{QDRANT_COLLECTION_PREFIX}{kb_id}"):
-		clean_name = (name or "").strip()
-		if clean_name and clean_name not in candidates:
-			candidates.append(clean_name)
+	collection_name = (OPENWEBUI_QDRANT_KNOWLEDGE_COLLECTION or "open-webui_knowledge").strip()
+	if not collection_name:
+		return
 
-	for collection_name in candidates:
-		result = force_init_collection(collection_name)
-		if result.get("ok"):
-			logger.info("Pre-seeded hybrid Qdrant collection '%s': %s", collection_name, result)
-		else:
-			logger.warning("Pre-seed failed for Qdrant collection '%s': %s", collection_name, result)
+	result = force_init_collection(collection_name)
+	if result.get("ok"):
+		logger.info("Pre-seeded hybrid Qdrant collection '%s': %s", collection_name, result)
+	else:
+		logger.warning("Pre-seed failed for Qdrant collection '%s': %s", collection_name, result)
 
 
 # ═══════════════════════════════════════════════════════════════════════════

@@ -531,13 +531,13 @@ def resolve_knowledge_collection_name(kb_id: str) -> str:
             OPENWEBUI_QDRANT_KNOWLEDGE_COLLECTION,
         )
 
-    if kb_id in names:
-        return kb_id
-
-    # Common Open WebUI shared collection names
+    # Common Open WebUI shared collection names should be preferred when present.
     for candidate in ("open-webui_knowledge", "open_webui_knowledge", "knowledge"):
         if candidate in names:
             return candidate
+
+    if kb_id in names:
+        return kb_id
 
     # Preserve existing behavior as final fallback.
     return kb_id
